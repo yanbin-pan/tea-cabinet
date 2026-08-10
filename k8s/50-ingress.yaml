@@ -1,0 +1,32 @@
+# k3s bundles Traefik as its default ingress controller, so nothing extra needs
+# installing — this Ingress is picked up as-is.
+#
+# Change `host` below to your own domain before applying. /api is routed straight
+# to the backend so the API bypasses nginx when traffic arrives through Traefik;
+# everything else goes to the frontend, which serves the SPA.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tea-cabinet
+  namespace: tea-cabinet
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: tea.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

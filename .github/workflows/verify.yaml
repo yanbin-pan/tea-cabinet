@@ -1,0 +1,54 @@
+# Fast feedback on every branch and pull request: run the backend tests and a
+# real production frontend build. No registry access and no secrets needed, so
+# this is the gate that runs before anything is ever pushed to GHCR.
+name: Verify
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        working-directory: backend
+      - run: npm test
+        working-directory: backend
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  secrets:
+    name: No API key in frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert the frontend holds no Anthropic key or artifact globals
+        run: |
+          if grep -rniE 'ANTHROPIC_API_KEY|x-api-key|sk-ant-' frontend/src frontend/*.js frontend/*.html; then
+            echo "::error::Anthropic credentials must never appear in frontend code."
+            exit 1
+          fi
+          if grep -rn 'window\.storage' frontend/src; then
+            echo "::error::Claude artifact storage must not be used in the app."
+            exit 1
+          fi
+          echo "Frontend is clean."

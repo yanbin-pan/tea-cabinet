@@ -1,0 +1,16 @@
+# k3s ships the local-path provisioner, which binds the volume to a directory on
+# whichever node the pod first lands on. That volume is therefore node-local and
+# ReadWriteOnce, which is why the backend runs a single replica with a Recreate
+# strategy — two writers could never share this claim.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tea-data
+  namespace: tea-cabinet
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

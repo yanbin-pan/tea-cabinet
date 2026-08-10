@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      PORT: 8080
+      DATA_DIR: /app/data
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: claude-sonnet-4-6
+    volumes:
+      - tea-data:/app/data
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8081:80"
+
+volumes:
+  tea-data:

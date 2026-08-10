@@ -1,0 +1,20 @@
+{
+  "name": "tea-cabinet-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Express API for The Tea Cabinet: JSON persistence + Anthropic label-scan proxy",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

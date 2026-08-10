@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+
+# The real secret — use the .example file as a template, or create it with kubectl.
+k8s/20-backend-secret.yaml
+
+# Local backend data file.
+backend/data/
