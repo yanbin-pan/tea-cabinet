@@ -46,11 +46,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kustomize
+      # ubuntu-latest already ships kustomize, and the upstream installer refuses
+      # to overwrite it ("exists. Remove it first.") rather than skipping, which
+      # fails the job. Only install when it is genuinely missing.
+      - name: Ensure kustomize is available
         run: |
-          curl -sSfL --retry 3 \
-            https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh \
-            | bash -s -- 5.4.3 /usr/local/bin
+          set -euo pipefail
+          if ! command -v kustomize >/dev/null 2>&1; then
+            curl -sSfL --retry 3 \
+              https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh \
+              | bash -s -- 5.4.3 /usr/local/bin
+          fi
+          kustomize version
 
       # A manifest that does not build breaks the cluster silently: Flux reports
       # the Kustomization as failed and quietly keeps serving the old version.
