@@ -300,7 +300,10 @@ test("readPhoto refuses ids that are not 32 hex characters", async () => {
 });
 
 test("savePhoto rejects an empty body", async () => {
-  await assert.rejects(() => savePhoto(await tmpDir(), Buffer.alloc(0)));
+  // tmpDir() is awaited outside the callback: `await` inside a non-async arrow
+  // is a syntax error, not a runtime one, so it would fail the whole file.
+  const dir = await tmpDir();
+  await assert.rejects(() => savePhoto(dir, Buffer.alloc(0)));
 });
 
 test("savePhoto rejects anything over the size limit", async () => {
