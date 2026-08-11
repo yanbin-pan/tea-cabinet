@@ -85,12 +85,19 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
       # Proves the pushed image is genuinely arm64 rather than trusting buildx.
+      # An amd64 image here gives a CrashLoopBackOff with `exec format error`
+      # on the Pis, which reads like an application fault and wastes an hour.
+      #
+      # `--raw` is the wrong source: with provenance off and one platform, the
+      # pushed artifact is a plain manifest whose JSON has no `architecture`
+      # field at all — that lives in the config blob. Ask the template for the
+      # resolved config field instead, which needs no JSON scraping.
       - name: Verify the pushed image is arm64
         run: |
           set -euo pipefail
           arch=$(docker buildx imagetools inspect \
-            "${{ steps.image.outputs.name }}:${{ github.sha }}" --raw \
-            | grep -o '"architecture":"[^"]*"' | head -1 | cut -d'"' -f4)
+            "${{ steps.image.outputs.name }}:${{ github.sha }}" \
+            --format '{{.Image.Architecture}}')
           echo "Pushed architecture: ${arch:-<none>}"
           [ "$arch" = "arm64" ] || { echo "::error::Expected arm64, got '${arch:-<none>}'."; exit 1; }
 
