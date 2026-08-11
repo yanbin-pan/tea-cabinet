@@ -70,13 +70,19 @@ jobs:
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
 
-          grep -q 'host: tea.minipi.net' /tmp/rendered.yaml \
-            || fail "The ingress host is not tea.minipi.net."
+          # The middleware chain is what stands between this app and the open
+          # internet. Assert both links, and their order: rate limiting must come
+          # first so guesses are throttled before they cost a bcrypt verification.
+          grep -q 'router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The ingress middleware chain is missing, reordered, or renamed."
 
-          # The basic-auth middleware is the only thing standing between this app
-          # and the public internet. Losing the annotation would fail *open*.
-          grep -q 'router.middlewares: tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
-            || fail "The basic-auth middleware annotation is missing from the ingress."
+          grep -q 'kind: Middleware' /tmp/rendered.yaml \
+            || fail "No Middleware objects were rendered."
+
+          # A rate limiter keyed on anything else buckets every visitor together,
+          # because behind the CDN the source address is an internal pod IP.
+          grep -q 'requestHeaderName: Cf-Connecting-Ip' /tmp/rendered.yaml \
+            || fail "The rate limiter must key on Cf-Connecting-Ip, not the source IP."
 
           # Two replicas each, as designed. Catches an accidental scale-down.
           [ "$(grep -c '^  replicas: 2$' /tmp/rendered.yaml)" = "2" ] \

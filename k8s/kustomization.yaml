@@ -1,9 +1,9 @@
-# What Flux builds. The home-cluster repo points a Kustomization at this
-# directory, so everything listed here is reconciled into the cluster within a
-# minute of landing on `main`.
+# The deployment entry point. A GitOps controller watches this directory, so
+# everything listed here is reconciled into the cluster shortly after it lands
+# on `main`.
 #
 # `20-backend-secret.example.yaml` is deliberately absent: it is a template, not
-# a deployable resource. See the README for how to supply the Anthropic key.
+# a deployable resource.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

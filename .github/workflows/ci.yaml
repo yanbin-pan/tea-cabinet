@@ -1,8 +1,7 @@
-# Merge to main → test → build arm64 images → pin the new tag → Flux deploys.
+# Merge to main → test → build arm64 images → pin the new tag → GitOps deploys.
 #
-# The deploy step is a git commit, not a kubectl apply. The cluster's API server
-# is deliberately not reachable from the internet, so a runner could not talk to
-# it even with credentials; instead Flux watches this repository and pulls. That
+# The deploy step is a git commit, not a kubectl apply: a GitOps controller
+# watches this repository and pulls, rather than CI pushing to a cluster. That
 # means no cluster credentials exist in GitHub at all, and a rollback is
 # `git revert` rather than a scramble for the previous image tag.
 name: Build and deploy
@@ -159,12 +158,7 @@ jobs:
             echo "### Deployed"
             echo
             echo "- **Images:** \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tea-cabinet-{backend,frontend}:${GITHUB_SHA:0:7}\`"
-            echo "- **Flux** picks this up within ~1 minute (source interval)."
-            echo "- **Live at:** https://tea.minipi.net"
+            echo "- **Manifests** now pin that tag; the GitOps controller rolls it out shortly."
             echo
-            echo "Watch the rollout:"
-            echo '```bash'
-            echo "flux reconcile kustomization tea-cabinet --with-source"
-            echo "kubectl -n tea-cabinet rollout status deploy/backend deploy/frontend"
-            echo '```'
+            echo "Roll back by reverting this commit."
           } >> "$GITHUB_STEP_SUMMARY"

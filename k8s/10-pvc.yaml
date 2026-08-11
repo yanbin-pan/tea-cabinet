@@ -1,15 +1,15 @@
-# No storageClassName, so this lands on `ssd` — the cluster default, an NFS
-# export of rpi-01's SSD that is backed up nightly to R2. The tea collection is
-# data you would miss; `local-path` is one node's SD card and is not backed up.
+# No storageClassName, so this uses the cluster's default class. Pick a class
+# that is shared and backed up: the collection is the entire database, and a
+# node-local class would tie it to one machine's disk with no backup.
 #
 # ReadWriteMany, not ReadWriteOnce: the backend runs two replicas that may be
 # scheduled on different nodes, and RWO would leave the second stuck in
-# ContainerCreating. NFS supports RWX natively, so both mount the same directory.
+# ContainerCreating. A shared filesystem lets both mount the same directory.
 #
 # This is safe *for this app specifically* because every write is a whole-file
 # atomic rename (see backend/server.js) rather than an in-place update. Do not
-# copy this pattern for an app with a SQLite database — see apps/README.md in
-# the home-cluster repo.
+# copy this pattern for an app with an embedded database such as SQLite, where
+# two writers over a shared mount will corrupt the file.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -73,8 +73,8 @@ spec:
               cpu: 50m
               memory: 64Mi
             limits:
-              # Always set a memory limit: 24GB across four Pis, and one
-              # unbounded app can evict everything else.
+              # Always set a memory limit. On a small cluster one unbounded
+              # app can evict everything else.
               memory: 256Mi
       volumes:
         - name: tea-data

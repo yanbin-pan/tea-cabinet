@@ -1,17 +1,45 @@
-# The "only me" gate. Traefik challenges with HTTP basic auth before any request
-# reaches the frontend or the API, so an unauthenticated visitor gets a 401 and
-# never touches the app.
+# The access gate: rate limit first, then the password challenge.
+#
+# Order is deliberate. The ingress lists the rate limiter ahead of basic auth so
+# a flood of guesses is throttled *before* each one costs a bcrypt verification.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tea-rate-limit
+spec:
+  rateLimit:
+    # Per client, not in total. Comfortable for a person browsing — a page load
+    # is a handful of requests — while capping automated guessing at a rate that
+    # makes an online attack pointless.
+    average: 60
+    period: 1m
+    burst: 30
+    sourceCriterion:
+      # THE IMPORTANT LINE. Requests reach Traefik through a CDN and a tunnel
+      # daemon, so by the time Traefik sees them the source address is an
+      # internal pod address and X-Forwarded-For carries that same internal
+      # address. Measured, not assumed: the real client address survives only in
+      # Cf-Connecting-Ip.
+      #
+      # Keying on anything else would put every visitor on the planet into one
+      # shared bucket, so the first busy client would throttle everyone.
+      #
+      # This header cannot be spoofed from outside: the only route in is through
+      # Cloudflare, which overwrites Cf-Connecting-Ip on every request.
+      requestHeaderName: Cf-Connecting-Ip
+---
+# The password gate. Traefik challenges before any request reaches the frontend
+# or the API, so an unauthenticated visitor gets a 401 and never touches the app.
 #
 # Credentials live in the `tea-basic-auth` Secret as an htpasswd line with a
-# bcrypt hash — committed to git encrypted with SOPS and decrypted in-cluster by
-# Flux. The plaintext password is never in this repo.
+# bcrypt hash — committed encrypted with SOPS and decrypted in-cluster by Flux.
+# The plaintext password is never in this repository.
 #
-# Worth knowing about the threat model: TLS terminates at Cloudflare's edge, so
-# the password is protected in transit but is visible to Cloudflare, and it is
-# replayed on every request the way basic auth always is. That is an acceptable
-# trade for a personal app; if you later want auth that never reaches your house
-# at all, add this hostname to terraform/cloudflare/access.tf in the home-cluster
-# repo and the two layers stack.
+# Threat model worth keeping in mind: TLS terminates at the edge, so the password
+# is protected in transit but is visible to the CDN, and basic auth replays it on
+# every request. The rate limiter above bounds online guessing; it is not a
+# substitute for putting the hostname behind an identity proxy, which stops
+# unauthenticated traffic before it is ever forwarded.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

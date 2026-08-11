@@ -1,25 +1,24 @@
-# Traefik ships with k3s and is what the Cloudflare tunnel forwards to. No TLS
-# block and no cert-manager annotation: TLS terminates at Cloudflare's edge, so
-# this listens on plain HTTP inside the LAN.
-#
-# The tunnel's single `*.minipi.net` rule sends every hostname to Traefik; this
-# Ingress is the per-app rule that claims `tea.minipi.net` specifically. A
-# hostname with no matching Ingress gets a 404, so nothing here is implicit.
+# No TLS block and no cert-manager annotation: TLS terminates upstream at the
+# CDN edge, so this listens on plain HTTP on the internal network.
 #
 # `/api` is routed straight to the backend, bypassing nginx, so the API path has
 # one less hop. Everything else goes to the frontend, which serves the SPA.
 #
-# The middleware annotation names the Middleware as <namespace>-<name>@kubernetescrd
+# The middleware annotation names each Middleware as <namespace>-<name>@kubernetescrd
 # and applies to BOTH routers this Ingress creates — the SPA and the API are
-# equally gated. Traefik's own docs use this naming; getting it wrong fails open
-# to a 404 rather than an unauthenticated 200, which is at least a loud failure.
+# equally gated. Order is significant and rate limiting comes first, so a flood
+# of guesses is throttled before any of them costs a bcrypt verification.
+#
+# Getting a middleware name wrong fails to a 404 rather than an unauthenticated
+# 200 — a loud failure rather than a silent hole. The `manifests` job in CI
+# asserts both names survive any edit to this file.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: tea-cabinet
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-basic-auth@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:

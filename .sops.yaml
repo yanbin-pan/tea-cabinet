@@ -1,7 +1,9 @@
-# Secrets in this repo are committed encrypted and decrypted in-cluster by Flux,
-# which holds the matching private key as the `sops-age` secret in flux-system.
-# The recipient below is the home-cluster age *public* key — it can encrypt, but
-# only the cluster (and the key at ~/.config/sops/age/home-cluster.agekey) can read.
+# Secrets in this repo are committed encrypted and decrypted at deploy time by
+# the GitOps controller, which holds the matching private key.
+#
+# The recipient below is an age *public* key: it can encrypt, and only the holder
+# of the corresponding private key can read. That is why committing these files
+# is safe, and why the private key is the one thing that must never be here.
 creation_rules:
   # Encrypt only data/stringData so metadata stays readable and diffs reviewable.
   - path_regex: .*\.sops\.ya?ml$
