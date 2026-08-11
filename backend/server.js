@@ -3,6 +3,7 @@ import path from "node:path";
 import express from "express";
 import cors from "cors";
 import { readCollection, writeCollection } from "./lib/store.js";
+import { savePhoto, readPhoto } from "./lib/photos.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
@@ -10,8 +11,8 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 
 export const app = express();
-// Label photos travel as base64 data URLs, so the body limit has to be generous.
-app.use(express.json({ limit: "15mb" }));
+// Photos are stored separately now, so the collection document holds metadata only.
+app.use(express.json({ limit: "5mb" }));
 app.use(cors());
 
 export async function ensureStore() {
@@ -43,6 +44,43 @@ app.put("/api/collection", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "Could not save the collection." });
   }
+});
+
+// Raw bytes, not base64: encoding a photo into JSON inflates it by a third,
+// which is how the collection document outgrew its limit in the first place.
+const photoBody = express.raw({ type: "image/*", limit: "10mb" });
+
+app.post("/api/photos", photoBody, async (req, res) => {
+  if (!Buffer.isBuffer(req.body)) {
+    res.status(415).json({ error: "Send image bytes with an image/* content type." });
+    return;
+  }
+  if (req.body.length === 0) {
+    res.status(400).json({ error: "A photo must have a body." });
+    return;
+  }
+  try {
+    const id = await savePhoto(DATA_DIR, req.body);
+    res.json({ id });
+  } catch (e) {
+    if (e.code === "TOO_LARGE") {
+      res.status(413).json({ error: "That photo is too large." });
+      return;
+    }
+    res.status(500).json({ error: "Could not store that photo." });
+  }
+});
+
+app.get("/api/photos/:id", async (req, res) => {
+  const bytes = await readPhoto(DATA_DIR, req.params.id);
+  if (!bytes) {
+    res.status(404).json({ error: "No such photo." });
+    return;
+  }
+  res.set("Content-Type", "image/jpeg");
+  // Ids are random and a photo's bytes never change, so this can be cached hard.
+  res.set("Cache-Control", "private, max-age=31536000, immutable");
+  res.send(bytes);
 });
 
 app.post("/api/scan", async (req, res) => {
