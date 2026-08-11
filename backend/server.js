@@ -3,7 +3,7 @@ import path from "node:path";
 import express from "express";
 import cors from "cors";
 import { readCollection, writeCollection } from "./lib/store.js";
-import { savePhoto, readPhoto } from "./lib/photos.js";
+import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
@@ -40,10 +40,23 @@ app.put("/api/collection", async (req, res) => {
   }
   try {
     await writeCollection(DATA_DIR, teas);
-    res.json({ ok: true, count: teas.length });
   } catch (e) {
     res.status(500).json({ error: "Could not save the collection." });
+    return;
   }
+
+  // Reclaim photos nothing points at any more. Deliberately after the write and
+  // deliberately not awaited into the response path: a failed sweep wastes disk,
+  // but a failed save loses data, and the client must not be told the save
+  // failed because cleanup did.
+  try {
+    const referenced = teas.map((t) => t && t.photo).filter((p) => typeof p === "string");
+    await sweepOrphans(DATA_DIR, referenced);
+  } catch (e) {
+    // Intentionally ignored; the next save will try again.
+  }
+
+  res.json({ ok: true, count: teas.length });
 });
 
 // Raw bytes, not base64: encoding a photo into JSON inflates it by a third,
