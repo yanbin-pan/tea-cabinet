@@ -1,19 +1,29 @@
-# k3s bundles Traefik as its default ingress controller, so nothing extra needs
-# installing — this Ingress is picked up as-is.
+# Traefik ships with k3s and is what the Cloudflare tunnel forwards to. No TLS
+# block and no cert-manager annotation: TLS terminates at Cloudflare's edge, so
+# this listens on plain HTTP inside the LAN.
 #
-# Change `host` below to your own domain before applying. /api is routed straight
-# to the backend so the API bypasses nginx when traffic arrives through Traefik;
-# everything else goes to the frontend, which serves the SPA.
+# The tunnel's single `*.minipi.net` rule sends every hostname to Traefik; this
+# Ingress is the per-app rule that claims `tea.minipi.net` specifically. A
+# hostname with no matching Ingress gets a 404, so nothing here is implicit.
+#
+# `/api` is routed straight to the backend, bypassing nginx, so the API path has
+# one less hop. Everything else goes to the frontend, which serves the SPA.
+#
+# The middleware annotation names the Middleware as <namespace>-<name>@kubernetescrd
+# and applies to BOTH routers this Ingress creates — the SPA and the API are
+# equally gated. Traefik's own docs use this naming; getting it wrong fails open
+# to a 404 rather than an unauthenticated 200, which is at least a loud failure.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: tea-cabinet
-  namespace: tea-cabinet
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-basic-auth@kubernetescrd
 spec:
+  ingressClassName: traefik
   rules:
-    - host: tea.example.com
+    - host: tea.minipi.net
       http:
         paths:
           - path: /api

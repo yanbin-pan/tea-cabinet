@@ -1,0 +1,9 @@
+# Secrets in this repo are committed encrypted and decrypted in-cluster by Flux,
+# which holds the matching private key as the `sops-age` secret in flux-system.
+# The recipient below is the home-cluster age *public* key — it can encrypt, but
+# only the cluster (and the key at ~/.config/sops/age/home-cluster.agekey) can read.
+creation_rules:
+  # Encrypt only data/stringData so metadata stays readable and diffs reviewable.
+  - path_regex: .*\.sops\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1r8ph8yhw6ulpntwa34jn9k9xj6jdkw96afrtuh5wr3pt8cj0d4vq4e286m

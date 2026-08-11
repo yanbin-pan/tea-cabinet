@@ -81,73 +81,167 @@ cd frontend && npm run build  # a real production build is the frontend's gate
 
 ## CI/CD
 
-`.github/workflows/verify.yaml` runs on every branch and pull request: backend tests,
-a production frontend build, and a guard asserting no Anthropic credentials or Claude
-artifact globals ever land in `frontend/`.
+**Merge to `main` → tests → arm64 images → pinned tag → Flux deploys.** Live at
+<https://tea.minipi.net> about two minutes later.
 
-`.github/workflows/ci.yaml` runs on push to `main` (or manually via *Run workflow*).
-It cross-builds both images for **linux/arm64** with QEMU + Buildx and pushes them to
-GHCR as:
+```
+  PR ──► verify.yaml ──┐
+                       │  tests · frontend build · kustomize build · secret guards
+  merge to main ──► ci.yaml
+                       │
+                       ├─ build   cross-build linux/arm64, push to GHCR as :latest and :<sha>
+                       │          then assert the pushed manifest really is arm64
+                       │
+                       └─ deploy  rewrite both newTag values in k8s/kustomization.yaml
+                                  to <sha> and push that commit back to main
+                                          │
+                                          ▼
+                          Flux (in-cluster) notices within ~1 min and reconciles
+```
 
-- `ghcr.io/yanbin-pan/tea-cabinet-backend:latest` and `:<sha>`
-- `ghcr.io/yanbin-pan/tea-cabinet-frontend:latest` and `:<sha>`
+### Why the deploy step is a git commit, not `kubectl apply`
 
-No extra secrets are needed — it authenticates with the built-in `GITHUB_TOKEN`.
+The cluster's API server is deliberately unreachable from the internet, so a GitHub
+runner could not talk to it even holding credentials. Flux pulls instead of CI pushing.
+Three things fall out of that:
 
-> **After the first successful run**, make the two GHCR packages pullable by the
-> cluster. Either set each package to **public** (GitHub → your profile → Packages →
-> package → Package settings → Change visibility), or keep them private and give the
-> cluster a pull secret:
->
-> ```bash
-> kubectl -n tea-cabinet create secret docker-registry ghcr-pull \
->   --docker-server=ghcr.io --docker-username=yanbin-pan --docker-password=<PAT with read:packages>
-> ```
->
-> then add `imagePullSecrets: [{name: ghcr-pull}]` to both pod specs.
+- **No cluster credentials exist in GitHub at all** — nothing to leak or rotate.
+- **A rollback is `git revert`.** The running image tag is a line in a file, in history.
+- **The cluster is the source of truth for nothing.** Reconstructible from the repo.
+
+`verify.yaml` is reused by `ci.yaml` via `workflow_call`, so nothing reaches GHCR that
+has not passed the exact gate a pull request does.
+
+> **The push-back could loop.** `ci.yaml` writes `k8s/kustomization.yaml`, and a push to
+> `main` is what triggers it. The trigger's `paths-ignore` lists that file, so the bot's
+> own commit cannot start another run. Do not remove it.
+
+### Where the cluster is wired up
+
+One file in the `home-cluster` repo, [`clusters/home/tea-cabinet.yaml`](https://github.com/yanbin-pan/home-cluster/blob/main/clusters/home/tea-cabinet.yaml),
+points Flux at *this* repository's `k8s/` directory. That is the entire integration —
+this app owns its own manifests, versioned next to the code they deploy, and no
+cross-repo write credential is needed in either direction.
 
 ---
 
 ## Deploying to k3s
 
-The manifests in `k8s/` target k3s specifically: it bundles **Traefik** as the ingress
-controller and the **local-path** storage provisioner, so nothing else needs installing.
+Routine deploys need nothing but a merge. The steps below are **first-time setup only**,
+and the order matters.
+
+**1. Create `main`.** Flux is told to watch that branch; it must exist first.
 
 ```bash
-kubectl apply -f k8s/00-namespace.yaml
-
-# The Anthropic key. Skip this and everything still runs — scanning just returns 503.
-kubectl -n tea-cabinet create secret generic tea-secrets \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
-
-# Set your own host in k8s/50-ingress.yaml (default placeholder: tea.example.com),
-# and confirm the GHCR owner in k8s/30-backend.yaml and k8s/40-frontend.yaml.
-
-kubectl apply -f k8s/
-kubectl -n tea-cabinet rollout status deploy/backend deploy/frontend
+git push github HEAD:main
 ```
 
-Notes:
+**2. Let CI build.** The first run publishes both GHCR packages. Until it finishes, the
+manifests still point at `:latest`, which does not exist yet — expect `ImagePullBackOff`
+in that window. It clears itself when the deploy job pins the SHA.
 
-- `local-path` binds the volume to whichever node the pod lands on, so the claim is
-  `ReadWriteOnce` and the backend runs **one replica with a `Recreate` strategy** —
-  a single writer over that file. The frontend is stateless and runs two replicas.
-- The `ANTHROPIC_API_KEY` env reference is marked `optional: true`, so the backend
-  starts cleanly on a cluster where the secret hasn't been created yet.
-- Rolling a new image after CI: `kubectl -n tea-cabinet rollout restart deploy/backend deploy/frontend`
-  (both use `imagePullPolicy: Always` with the `:latest` tag), or pin the `:<sha>` tag
-  for a reproducible deploy.
+**3. Make the packages pullable.** New GHCR packages are private, and the cluster has no
+credentials. Set both to **public** — GitHub → your profile → Packages →
+`tea-cabinet-backend` / `tea-cabinet-frontend` → Package settings → Change visibility.
+
+<details>
+<summary>Or keep them private and give the cluster a pull secret</summary>
+
+```bash
+kubectl -n tea-cabinet create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io --docker-username=yanbin-pan --docker-password=<PAT with read:packages>
+```
+
+then add `imagePullSecrets: [{name: ghcr-pull}]` to both pod specs. Note this secret is
+*not* in git, so it will not survive a cluster rebuild — the public route is one less
+thing to remember.
+</details>
+
+**4. Point Flux at the repo**, from the `home-cluster` checkout:
+
+```bash
+git add clusters/home/tea-cabinet.yaml && git commit -m "Deploy the Tea Cabinet" && git push
+```
+
+**5. Watch it land.**
+
+```bash
+flux reconcile kustomization tea-cabinet --with-source
+kubectl -n tea-cabinet rollout status deploy/backend deploy/frontend
+curl -sS -o /dev/null -w '%{http_code}\n' https://tea.minipi.net/   # expect 401
+```
+
+A `401` is the correct answer — that is the basic-auth gate working.
+
+### The Anthropic key (optional)
+
+Without it the app runs fine; `/api/scan` answers `503` and the UI asks you to type the
+fields in. To enable label scanning, add it the same way the login is stored — encrypted
+in git, so it survives a rebuild:
+
+```bash
+cat > k8s/80-anthropic-secret.sops.yaml <<'YAML'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tea-secrets
+type: Opaque
+stringData:
+  ANTHROPIC_API_KEY: sk-ant-...
+YAML
+sops --encrypt --in-place k8s/80-anthropic-secret.sops.yaml
+# add it to the `resources:` list in k8s/kustomization.yaml, then commit
+```
+
+The env reference is marked `optional: true`, so the backend starts cleanly either way.
+
+### Notes on the manifests
+
+- **Storage is `ssd`, not `local-path`.** The claim omits `storageClassName` to get the
+  cluster default: an NFS export of rpi-01's SSD, backed up nightly to R2. `local-path`
+  is one node's SD card with no backup.
+- **`ReadWriteMany`, deliberately.** Both backend replicas mount the same volume, and
+  they may land on different nodes. Verified on this cluster: two pods on `rpi-02` and
+  `rpi-03` each saw the other's writes. This is safe *for this app* only because every
+  write is a whole-file atomic rename — do not copy it for an app with a SQLite database.
+- **Image tags are pinned to a SHA by CI**, so `imagePullPolicy` is left at the default.
+  Pulling on every restart was only needed because `:latest` is mutable.
+- **Concurrent edits are last-writer-wins.** Two browser tabs saving at once means one
+  overwrites the other. That was already true with one replica — the frontend `PUT`s the
+  whole authoritative list — and two replicas do not make it worse.
+- **A frontend pod can crash-loop briefly on a first deploy.** nginx resolves the
+  `backend` hostname in `proxy_pass` once at startup and exits if it does not resolve, so
+  a frontend pod that starts before the `backend` Service exists will restart until it
+  does. It is self-correcting and only shows up on the very first apply. Through the
+  ingress this proxy is unused anyway — Traefik sends `/api` straight to the backend.
 
 ### Exposing it
 
-- **Cloudflare Tunnel (recommended)** — run `cloudflared` in the cluster or on the Pi
-  pointing at the `frontend` service or the Traefik ingress. No ports opened on your
-  router, no dynamic-DNS worries, and TLS terminates at Cloudflare. This is the safer
-  option for a home network.
-- **DNS + port-forward** — point an A record at your home IP and forward 80/443 to the
-  Pi. Simpler conceptually, but it exposes your home address and needs your own TLS
-  (add cert-manager or a Traefik ACME resolver, and switch the ingress entrypoint to
-  `websecure`).
+Already handled by the cluster, with no change needed here. The Cloudflare tunnel routes
+`*.minipi.net` to Traefik, and `k8s/50-ingress.yaml` is the per-app rule claiming
+`tea.minipi.net`. No DNS record, no Terraform change, no open port on the router. TLS
+terminates at Cloudflare's edge, which is why the ingress speaks plain HTTP.
+
+### Who can get in
+
+Traefik challenges with HTTP basic auth before a request reaches either service, so an
+unauthenticated visitor gets a `401` and never touches the app. Credentials live in
+`k8s/70-basic-auth-secret.sops.yaml` as a bcrypt htpasswd line, committed encrypted
+against the cluster's age key and decrypted in-cluster by Flux.
+
+Change the password:
+
+```bash
+htpasswd -nbB ybpan 'new-password'          # copy the output line
+sops k8s/70-basic-auth-secret.sops.yaml     # paste it under `users:`, save
+git commit -am "Rotate the Tea Cabinet password" && git push
+```
+
+Basic auth replays the password on every request and is visible to Cloudflare, which
+terminates TLS. That is a reasonable trade for a personal app. To add a second,
+independent layer that stops unauthenticated traffic *before* it reaches your house, add
+`tea.minipi.net` to `terraform/cloudflare/access.tf` in the `home-cluster` repo and
+`terraform apply` — the two stack, exactly as Grafana already does it.
 
 ### Backups
 
@@ -167,7 +261,15 @@ entries by `id` and updates in place.
 ```
 frontend/   React + Vite app, nginx serving config, Dockerfile
 backend/    Express API, node:test suite, Dockerfile
-k8s/        namespace, PVC, secret example, deployments, Traefik ingress
-.github/    verify (tests) and ci (arm64 build + GHCR push) workflows
+k8s/        what Flux deploys — kustomization.yaml is the entry point
+              00-namespace  10-pvc  30-backend  40-frontend
+              50-ingress    60-basic-auth (Traefik middleware)
+              70-basic-auth-secret.sops.yaml  ← encrypted, safe to commit
+.github/    verify (tests + manifest render + secret guards)
+            ci      (arm64 build → GHCR → pin tag → push back for Flux)
+.sops.yaml  which age key secrets in this repo are encrypted to
 reference/  the original single-file UI artifact and the build spec
 ```
+
+Anything matching `*.sops.yaml` is encrypted at rest and checked by CI; the `secrets`
+job fails the build if such a file is ever committed in the clear.

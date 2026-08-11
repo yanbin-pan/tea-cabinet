@@ -1,0 +1,25 @@
+# The "only me" gate. Traefik challenges with HTTP basic auth before any request
+# reaches the frontend or the API, so an unauthenticated visitor gets a 401 and
+# never touches the app.
+#
+# Credentials live in the `tea-basic-auth` Secret as an htpasswd line with a
+# bcrypt hash — committed to git encrypted with SOPS and decrypted in-cluster by
+# Flux. The plaintext password is never in this repo.
+#
+# Worth knowing about the threat model: TLS terminates at Cloudflare's edge, so
+# the password is protected in transit but is visible to Cloudflare, and it is
+# replayed on every request the way basic auth always is. That is an acceptable
+# trade for a personal app; if you later want auth that never reaches your house
+# at all, add this hostname to terraform/cloudflare/access.tf in the home-cluster
+# repo and the two layers stack.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tea-basic-auth
+spec:
+  basicAuth:
+    secret: tea-basic-auth
+    realm: The Tea Cabinet
+    # Do not pass the Authorization header through to the app. The backend has
+    # no use for it and it should not appear in application logs.
+    removeHeader: true

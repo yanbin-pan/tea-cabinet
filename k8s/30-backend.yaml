@@ -2,15 +2,18 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: tea-cabinet
   labels:
     app: backend
 spec:
-  replicas: 1
-  # Single writer on a ReadWriteOnce volume: the old pod must release the claim
-  # before the new one starts, so Recreate rather than RollingUpdate.
+  replicas: 2
+  # RollingUpdate is safe now that the claim is ReadWriteMany: both pods mount
+  # the same NFS directory, and the backend only ever replaces the whole file by
+  # atomic rename, so an overlapping pod cannot produce a torn read.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: backend
@@ -19,10 +22,18 @@ spec:
       labels:
         app: backend
     spec:
+      # Prefer one replica per node so a single node failure cannot take the API
+      # down. Soft, not required: on a four-node cluster it always schedules.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: backend
       containers:
         - name: backend
           image: ghcr.io/yanbin-pan/tea-cabinet-backend:latest
-          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
@@ -48,12 +59,22 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+          # Restart a pod that stops answering. Without this a wedged process
+          # stays in the Service endpoints forever if it never fails readiness.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
           resources:
             requests:
               cpu: 50m
               memory: 64Mi
             limits:
-              cpu: 500m
+              # Always set a memory limit: 24GB across four Pis, and one
+              # unbounded app can evict everything else.
               memory: 256Mi
       volumes:
         - name: tea-data
@@ -64,7 +85,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: backend
-  namespace: tea-cabinet
 spec:
   selector:
     app: backend

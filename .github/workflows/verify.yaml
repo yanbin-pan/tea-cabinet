@@ -1,6 +1,9 @@
-# Fast feedback on every branch and pull request: run the backend tests and a
-# real production frontend build. No registry access and no secrets needed, so
-# this is the gate that runs before anything is ever pushed to GHCR.
+# Fast feedback on every branch and pull request: backend tests, a real
+# production frontend build, a manifest build, and a guard that no Anthropic
+# credential ever lands in frontend code.
+#
+# Also exposed as `workflow_call` so the deploy pipeline reuses these exact jobs
+# rather than duplicating them — nothing reaches GHCR that has not passed here.
 name: Verify
 
 on:
@@ -8,6 +11,7 @@ on:
     branches-ignore: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   backend:
@@ -36,11 +40,49 @@ jobs:
       - run: npm run build
         working-directory: frontend
 
-  secrets:
-    name: No API key in frontend
+  manifests:
+    name: Kubernetes manifests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -sSfL --retry 3 \
+            https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh \
+            | bash -s -- 5.4.3 /usr/local/bin
+
+      # A manifest that does not build breaks the cluster silently: Flux reports
+      # the Kustomization as failed and quietly keeps serving the old version.
+      # Catching it here turns that into a red pull request instead.
+      - name: kustomize build
+        run: kustomize build k8s > /tmp/rendered.yaml
+
+      - name: Assert the render is sane
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          grep -q 'host: tea.minipi.net' /tmp/rendered.yaml \
+            || fail "The ingress host is not tea.minipi.net."
+
+          # The basic-auth middleware is the only thing standing between this app
+          # and the public internet. Losing the annotation would fail *open*.
+          grep -q 'router.middlewares: tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The basic-auth middleware annotation is missing from the ingress."
+
+          # Two replicas each, as designed. Catches an accidental scale-down.
+          [ "$(grep -c '^  replicas: 2$' /tmp/rendered.yaml)" = "2" ] \
+            || fail "Expected exactly two Deployments at replicas: 2."
+
+          echo "Manifests render correctly."
+
+  secrets:
+    name: No plaintext secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Assert the frontend holds no Anthropic key or artifact globals
         run: |
           if grep -rniE 'ANTHROPIC_API_KEY|x-api-key|sk-ant-' frontend/src frontend/*.js frontend/*.html; then
@@ -52,3 +94,37 @@ jobs:
             exit 1
           fi
           echo "Frontend is clean."
+
+      # A *.sops.yaml file whose values are readable means someone committed a
+      # secret in the clear — a forgotten `sops --encrypt`, or a merge resolved
+      # against the decrypted side. Three independent checks, because the first
+      # two prove the file went through sops and the third catches the specific
+      # values that would matter if it somehow did not.
+      - name: Assert every .sops.yaml is actually encrypted
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r f; do
+            found=1
+
+            grep -q 'ENC\[' "$f" \
+              || { echo "::error file=$f::Not encrypted. Run: sops --encrypt --in-place $f"; exit 1; }
+
+            # sops writes this metadata block only on a real encrypt.
+            grep -q '^sops:' "$f" \
+              || { echo "::error file=$f::No sops metadata block; this file was not encrypted by sops."; exit 1; }
+
+            # Belt and braces: the plaintext forms of what this repo actually stores.
+            if grep -qE '\$2[aby]\$|sk-ant-' "$f"; then
+              echo "::error file=$f::A plaintext credential is visible in this file."
+              exit 1
+            fi
+
+            echo "$f is encrypted."
+          # `! -name '.sops.yaml'` matters: the repo-root sops *config* file also
+          # ends in .sops.yaml but holds no secret and is never encrypted.
+          done < <(find . -path ./node_modules -prune -o \
+                        \( -name '*.sops.yaml' -o -name '*.sops.yml' \) \
+                        ! -name '.sops.yaml' ! -name '.sops.yml' -print)
+
+          [ "$found" = "1" ] || echo "No .sops.yaml files to check."

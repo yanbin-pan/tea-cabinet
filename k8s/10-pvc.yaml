@@ -1,16 +1,22 @@
-# k3s ships the local-path provisioner, which binds the volume to a directory on
-# whichever node the pod first lands on. That volume is therefore node-local and
-# ReadWriteOnce, which is why the backend runs a single replica with a Recreate
-# strategy — two writers could never share this claim.
+# No storageClassName, so this lands on `ssd` — the cluster default, an NFS
+# export of rpi-01's SSD that is backed up nightly to R2. The tea collection is
+# data you would miss; `local-path` is one node's SD card and is not backed up.
+#
+# ReadWriteMany, not ReadWriteOnce: the backend runs two replicas that may be
+# scheduled on different nodes, and RWO would leave the second stuck in
+# ContainerCreating. NFS supports RWX natively, so both mount the same directory.
+#
+# This is safe *for this app specifically* because every write is a whole-file
+# atomic rename (see backend/server.js) rather than an in-place update. Do not
+# copy this pattern for an app with a SQLite database — see apps/README.md in
+# the home-cluster repo.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: tea-data
-  namespace: tea-cabinet
 spec:
   accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi

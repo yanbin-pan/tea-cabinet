@@ -1,13 +1,38 @@
-name: Build and push images
+# Merge to main → test → build arm64 images → pin the new tag → Flux deploys.
+#
+# The deploy step is a git commit, not a kubectl apply. The cluster's API server
+# is deliberately not reachable from the internet, so a runner could not talk to
+# it even with credentials; instead Flux watches this repository and pulls. That
+# means no cluster credentials exist in GitHub at all, and a rollback is
+# `git revert` rather than a scramble for the previous image tag.
+name: Build and deploy
 
 on:
   push:
     branches: [main]
+    # k8s/kustomization.yaml is written by this workflow's own deploy job. Ignoring
+    # it is what stops the push-back from triggering an endless build loop.
+    paths-ignore:
+      - 'k8s/kustomization.yaml'
+      - '**/*.md'
   workflow_dispatch:
 
+# One deploy at a time. Two concurrent runs would race on the push-back and the
+# loser would deploy an older SHA over a newer one.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
 jobs:
+  # Nothing reaches the registry that has not passed the same gate a pull
+  # request does.
+  verify:
+    name: Verify
+    uses: ./.github/workflows/verify.yaml
+
   build:
-    name: ${{ matrix.component }} (linux/arm64)
+    name: Build ${{ matrix.component }} (linux/arm64)
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,7 +51,9 @@ jobs:
           owner="${{ github.repository_owner }}"
           echo "name=ghcr.io/${owner,,}/tea-cabinet-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
 
-      # The cluster is a Raspberry Pi 4, so images are cross-built for arm64.
+      # The cluster is four Raspberry Pi 4s. An amd64-only image gives a
+      # CrashLoopBackOff with `exec format error`, which reads like an
+      # application bug, so the arm64 cross-build is not optional.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -48,8 +75,89 @@ jobs:
           context: ./${{ matrix.component }}
           platforms: linux/arm64
           push: true
+          # Attestations would publish this as a multi-manifest index with an
+          # `unknown/unknown` entry, which is noise for a single-platform image.
+          provenance: false
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      # Proves the pushed image is genuinely arm64 rather than trusting buildx.
+      - name: Verify the pushed image is arm64
+        run: |
+          set -euo pipefail
+          arch=$(docker buildx imagetools inspect \
+            "${{ steps.image.outputs.name }}:${{ github.sha }}" --raw \
+            | grep -o '"architecture":"[^"]*"' | head -1 | cut -d'"' -f4)
+          echo "Pushed architecture: ${arch:-<none>}"
+          [ "$arch" = "arm64" ] || { echo "::error::Expected arm64, got '${arch:-<none>}'."; exit 1; }
+
+  deploy:
+    name: Pin the new images for Flux
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # The default token is fine: this pushes to the same repository.
+          persist-credentials: true
+
+      - name: Pin both images to this commit
+        run: |
+          set -euo pipefail
+          # [[:space:]] rather than \s: POSIX, so this is the same expression you
+          # can run locally on macOS to check it, not a GNU-sed-only incantation.
+          sed -i -E "s|^([[:space:]]*newTag:).*|\1 ${GITHUB_SHA}|" k8s/kustomization.yaml
+
+          # Guard the sed rather than trusting it. A silent no-match here would
+          # leave the cluster on the previous image while the run went green.
+          pinned=$(grep -c "newTag: ${GITHUB_SHA}$" k8s/kustomization.yaml)
+          [ "$pinned" = "2" ] || {
+            echo "::error::Expected 2 pinned tags, found ${pinned}."
+            grep -n 'newTag:' k8s/kustomization.yaml
+            exit 1
+          }
+          echo "Pinned both images to ${GITHUB_SHA}."
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/kustomization.yaml
+
+          if git diff --cached --quiet; then
+            echo "Already pinned to this SHA; nothing to push."
+            exit 0
+          fi
+
+          git commit -m "Deploy ${GITHUB_SHA:0:7}
+
+          Image tags pinned by CI. Flux reconciles this within a minute.
+          Roll back by reverting this commit."
+
+          # Another merge may have landed while the images were building.
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed"
+            echo
+            echo "- **Images:** \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tea-cabinet-{backend,frontend}:${GITHUB_SHA:0:7}\`"
+            echo "- **Flux** picks this up within ~1 minute (source interval)."
+            echo "- **Live at:** https://tea.minipi.net"
+            echo
+            echo "Watch the rollout:"
+            echo '```bash'
+            echo "flux reconcile kustomization tea-cabinet --with-source"
+            echo "kubectl -n tea-cabinet rollout status deploy/backend deploy/frontend"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
