@@ -585,16 +585,24 @@ app.post("/api/photos", photoBody, async (req, res) => {
   }
 });
 
+// The try/catch is not decoration. Express 4 does not auto-catch a rejected
+// promise from an async handler — that arrived in Express 5 — so an unexpected
+// rejection here becomes an unhandled rejection, which Node terminates the
+// process on. Every fallible handler in this file wraps its await.
 app.get("/api/photos/:id", async (req, res) => {
-  const bytes = await readPhoto(DATA_DIR, req.params.id);
-  if (!bytes) {
-    res.status(404).json({ error: "No such photo." });
-    return;
+  try {
+    const bytes = await readPhoto(DATA_DIR, req.params.id);
+    if (!bytes) {
+      res.status(404).json({ error: "No such photo." });
+      return;
+    }
+    res.set("Content-Type", "image/jpeg");
+    // Ids are random and a photo's bytes never change, so this can be cached hard.
+    res.set("Cache-Control", "private, max-age=31536000, immutable");
+    res.send(bytes);
+  } catch (e) {
+    res.status(500).json({ error: "Could not read that photo." });
   }
-  res.set("Content-Type", "image/jpeg");
-  // Ids are random and a photo's bytes never change, so this can be cached hard.
-  res.set("Cache-Control", "private, max-age=31536000, immutable");
-  res.send(bytes);
 });
 ```
 
