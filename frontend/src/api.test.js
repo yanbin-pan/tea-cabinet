@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "vitest";
-import { ApiError, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId } from "./api.js";
+import { ApiError, loadCollection, saveCollection, uploadPhoto, dataUrlToBlob, photoUrl, isPhotoId } from "./api.js";
 
 function response(status, body, headers = {}) {
   return {
@@ -7,6 +7,19 @@ function response(status, body, headers = {}) {
     status,
     headers: { get: (k) => headers[k.toLowerCase()] ?? null },
     json: async () => body,
+  };
+}
+
+// A 2xx response whose body is not valid JSON — res.json() rejects with a
+// SyntaxError, same as the real fetch implementation would.
+function malformedJsonResponse(status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => null },
+    json: async () => {
+      throw new SyntaxError("Unexpected token in JSON");
+    },
   };
 }
 
@@ -87,6 +100,13 @@ describe("loadCollection", () => {
     const fetchImpl = async () => response(401, {});
     await expect(loadCollection({ fetchImpl })).rejects.toMatchObject({ kind: "auth" });
   });
+
+  // A 2xx response with an unparsable body must still surface as an ApiError,
+  // not a raw SyntaxError, so callers branching on err.kind/err.status hold.
+  test("throws an ApiError, not a raw SyntaxError, on a malformed 2xx body", async () => {
+    const fetchImpl = async () => malformedJsonResponse(200);
+    await expect(loadCollection({ fetchImpl })).rejects.toBeInstanceOf(ApiError);
+  });
 });
 
 describe("uploadPhoto", () => {
@@ -98,6 +118,34 @@ describe("uploadPhoto", () => {
   test("throws a specific message when the photo is too large", async () => {
     const fetchImpl = async () => response(413, {});
     await expect(uploadPhoto(new Blob(["x"]), { fetchImpl })).rejects.toThrow(/too large/i);
+  });
+
+  test("throws an ApiError, not a raw SyntaxError, on a malformed 2xx body", async () => {
+    const fetchImpl = async () => malformedJsonResponse(200);
+    await expect(uploadPhoto(new Blob(["x"]), { fetchImpl })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("dataUrlToBlob", () => {
+  // Node 20's fetch genuinely supports data: URLs, so this exercises the real
+  // default path (no injected fetchImpl) end to end.
+  test("converts a real data URL into a Blob with the right bytes", async () => {
+    const dataUrl = "data:text/plain;base64," + Buffer.from("hello").toString("base64");
+    const blob = await dataUrlToBlob(dataUrl);
+    expect(blob.size).toBe(5);
+    expect(await blob.text()).toBe("hello");
+  });
+
+  test("uses an injected fetchImpl instead of the bare global fetch", async () => {
+    let calledWith;
+    const fakeBlob = new Blob(["stub"]);
+    const fetchImpl = async (url) => {
+      calledWith = url;
+      return { blob: async () => fakeBlob };
+    };
+    const blob = await dataUrlToBlob("data:text/plain;base64,AAAA", { fetchImpl });
+    expect(calledWith).toBe("data:text/plain;base64,AAAA");
+    expect(blob).toBe(fakeBlob);
   });
 });
 

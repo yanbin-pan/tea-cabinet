@@ -23,6 +23,17 @@ function explain(status) {
   return `The server refused that request (HTTP ${status}).`;
 }
 
+// A 2xx response with a body that fails to parse as JSON is still a failure —
+// it should surface as an ApiError like every other failure mode, not as a
+// raw SyntaxError that callers branching on err.kind/err.status don't expect.
+async function parseJson(res) {
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new ApiError("The server sent back something unreadable.", { status: res.status, kind: "parse" });
+  }
+}
+
 export function isPhotoId(value) {
   return typeof value === "string" && PHOTO_ID.test(value);
 }
@@ -85,7 +96,7 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
   if (!res.ok) {
     throw new ApiError(explain(res.status), { status: res.status });
   }
-  const data = await res.json();
+  const data = await parseJson(res);
   const teas = Array.isArray(data && data.teas) ? data.teas : [];
   mirror(teas);
   return { teas, source: "server" };
@@ -106,13 +117,13 @@ export async function uploadPhoto(blob, { fetchImpl = fetch } = {}) {
     const message = res.status === 413 ? "That photo is too large." : explain(res.status);
     throw new ApiError(message, { status: res.status });
   }
-  const data = await res.json();
+  const data = await parseJson(res);
   return data.id;
 }
 
 // Converts an inline data URL — the shape older exports use — into bytes, so an
 // existing export can be imported without the caller knowing the difference.
-export async function dataUrlToBlob(dataUrl) {
-  const res = await fetch(dataUrl);
+export async function dataUrlToBlob(dataUrl, { fetchImpl = fetch } = {}) {
+  const res = await fetchImpl(dataUrl);
   return res.blob();
 }
