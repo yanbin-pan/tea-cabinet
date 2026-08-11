@@ -72,3 +72,23 @@ test("sweepOrphans keeps referenced photos and removes old unreferenced ones", a
 test("sweepOrphans on a directory with no photos is a no-op", async () => {
   assert.equal(await sweepOrphans(await tmpDir(), []), 0);
 });
+
+// sweepOrphans catches its own fs.readdir failure and returns 0 rather than
+// throwing (lib/photos.js). This is what makes the route's sweep catch a
+// backstop rather than the primary defence: a missing photos directory is
+// the normal case for a brand-new data dir, and must never surface as an error.
+test("sweepOrphans returns a count instead of throwing when the photos directory does not exist", async () => {
+  const dir = await tmpDir();
+  await assert.doesNotReject(() => sweepOrphans(dir, []));
+  assert.equal(await sweepOrphans(dir, []), 0);
+});
+
+// Same defensive readdir catch, but for ENOTDIR: something occupies the
+// "photos" path that isn't a directory at all. sweepOrphans still resolves
+// with a count rather than rejecting.
+test("sweepOrphans returns a count instead of throwing when the photos path exists but is not a directory", async () => {
+  const dir = await tmpDir();
+  await fs.writeFile(path.join(dir, "photos"), "not a directory");
+  await assert.doesNotReject(() => sweepOrphans(dir, []));
+  assert.equal(await sweepOrphans(dir, []), 0);
+});

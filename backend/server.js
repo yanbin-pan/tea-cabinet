@@ -49,6 +49,16 @@ app.put("/api/collection", async (req, res) => {
   // deliberately not awaited into the response path: a failed sweep wastes disk,
   // but a failed save loses data, and the client must not be told the save
   // failed because cleanup did.
+  //
+  // Investigated whether this catch is actually reachable: sweepOrphans
+  // (lib/photos.js) swallows its own fs.readdir failure (missing dir, or a
+  // non-directory occupying the photos path) and returns 0, and it swallows
+  // per-file fs.stat/fs.rm failures inside its loop too. `referenced` here is
+  // always a real array from map/filter, so the one remaining synchronous
+  // throw point (`new Set(referencedIds)` on a non-iterable) can't fire from
+  // this call site either. So this catch is defense-in-depth, not the primary
+  // guarantee — as far as this route ever calls it, sweepOrphans cannot
+  // throw. See backend/test/photos.test.js for the tests that pin that down.
   try {
     const referenced = teas.map((t) => t && t.photo).filter((p) => typeof p === "string");
     await sweepOrphans(DATA_DIR, referenced);

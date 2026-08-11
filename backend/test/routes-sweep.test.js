@@ -54,7 +54,12 @@ test("a freshly uploaded photo is never swept, even unreferenced", async () => {
   );
 });
 
-test("a failed sweep does not fail the save", async () => {
+// This does NOT exercise the route's sweep catch branch: sweepOrphans is
+// defensive internally (see photos.test.js) and never throws for the inputs
+// the route ever passes it, so there is no failure here to be isolated from.
+// This test only pins down that a save whose sweep has nothing to reclaim
+// still returns a normal ok response.
+test("a save with nothing for the sweep to reclaim still returns ok", async () => {
   const res = await fetch(`${base}/api/collection`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
