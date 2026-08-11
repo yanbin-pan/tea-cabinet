@@ -222,8 +222,12 @@ CI keeps its existing manifest and secret assertions.
   permitted addresses (infrastructure repository).
 - Remove the basic-auth middleware from the ingress; keep the rate limiter.
 - Add `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` to the deployment.
-- Raise the volume from 1Gi to 5Gi. Photos are now real files, for several
-  people, on the backed-up storage class.
+- Raise the volume request from 1Gi to 5Gi. **This is documentation, not
+  enforcement.** The NFS provisioner never applies a quota — a pod sees the whole
+  110G filesystem regardless of what the claim asks for. The number is raised so
+  the manifest states the intended footprint honestly; the controls that actually
+  bound this app's disk use are the per-photo limit and the collection size cap
+  above. Capacity is watched cluster-wide by the existing filesystem alert.
 
 ## Risks
 
