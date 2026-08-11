@@ -541,8 +541,12 @@ Expected: FAIL — `POST /api/photos` returns 404, so the first assertion fails.
 In `backend/server.js`, add to the imports:
 
 ```js
-import { savePhoto, readPhoto, MAX_PHOTO_BYTES } from "./lib/photos.js";
+import { savePhoto, readPhoto } from "./lib/photos.js";
 ```
+
+The size limit is enforced inside `savePhoto`, which throws `TOO_LARGE`; the
+route translates that to a `413`. Do not import `MAX_PHOTO_BYTES` here — the
+route never needs the value, and an unused import is dead weight.
 
 Change the JSON body limit from `15mb` to `5mb` — the document holds only metadata now:
 
@@ -707,7 +711,7 @@ Expected: FAIL — the orphan still exists, because nothing sweeps yet.
 In `backend/server.js`, add `sweepOrphans` to the photos import:
 
 ```js
-import { savePhoto, readPhoto, sweepOrphans, MAX_PHOTO_BYTES } from "./lib/photos.js";
+import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
 ```
 
 Replace the `PUT /api/collection` handler body:
@@ -2207,6 +2211,8 @@ Revise `docs/apps/tea-cabinet.md` in the infrastructure repo: replace the basic-
 
 **Spec coverage.** Identity → Tasks 7, 9. Storage layout → Tasks 1, 2, 8. Photo endpoints → Task 3. Orphan cleanup with the 24h guard → Tasks 2, 4. Atomic writes → Task 1. Client error surfacing → Tasks 5, 6. `hydrate` failure modes → Tasks 5, 6. Import via individual photo uploads → Task 6. Migration → Task 10. Testing → every task. Deployment → Task 12. Fail-closed behaviour → Tasks 7, 9, and verified in 12 Step 8.
 
-**Known gaps, deliberate.** No per-user scan cap — the spec records this as an accepted risk. The rate limiter is unchanged. `MAX_PHOTO_BYTES` is exported by `lib/photos.js` and imported in `server.js` for symmetry with the 10mb route limit, though the route relies on the module to enforce it.
+**Known gaps, deliberate.** No per-user scan cap — the spec records this as an accepted risk. The rate limiter is unchanged. `MAX_PHOTO_BYTES` is exported by `lib/photos.js` for its own tests; `server.js` does not import it, because the route translates the module's `TOO_LARGE` error into a `413` and never needs the number.
+
+**Deliberate empty catch blocks.** Three exist, each with a comment giving the reason: a corrupt collection reads as empty rather than throwing for every user; a failed orphan sweep must not fail the save that preceded it; a `localStorage` quota error must not break a save the server already accepted. These are decisions, not oversights — but a reviewer is right to challenge any of them, and the challenge should be adjudicated rather than pre-empted.
 
 **Type consistency.** `readCollection(dir)` / `writeCollection(dir, teas, meta)` take the directory first throughout. `savePhoto(dir, buffer)`, `readPhoto(dir, id)`, `sweepOrphans(dir, ids, opts)` likewise. `userKey(email)` → hex string feeds `userDir(dataDir, key)`. `loadCollection` returns `{teas, source, email}` in every branch after Task 11. `ApiError.kind` is one of `"network" | "http" | "auth"`.
