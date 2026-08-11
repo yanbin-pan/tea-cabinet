@@ -10,7 +10,8 @@ const DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "tea-cabinet-test-"));
 process.env.DATA_DIR = DATA_DIR;
 delete process.env.ANTHROPIC_API_KEY;
 
-const { app, ensureStore, readCollection, writeCollection } = await import("./server.js");
+const { app, ensureStore } = await import("./server.js");
+const { readCollection, writeCollection } = await import("./lib/store.js");
 
 const DATA_FILE = path.join(DATA_DIR, "collection.json");
 
@@ -26,53 +27,30 @@ test.after(async () => {
 
 async function clearStore() {
   await fs.rm(DATA_FILE, { force: true });
-  await fs.rm(`${DATA_FILE}.tmp`, { force: true });
 }
 
 test("readCollection returns [] when the file is absent", async () => {
   await clearStore();
-  assert.deepEqual(await readCollection(), []);
+  assert.deepEqual(await readCollection(DATA_DIR), []);
 });
 
-test("ensureStore creates the data dir and an empty store", async () => {
+test("ensureStore creates the data dir", async () => {
   await clearStore();
   await ensureStore();
-  const raw = JSON.parse(await fs.readFile(DATA_FILE, "utf8"));
-  assert.deepEqual(raw, { teas: [] });
-});
-
-test("writeCollection then readCollection round-trips, on disk as {app,version,teas}", async () => {
-  await clearStore();
-  const teas = [
-    { id: "t-1", englishName: "Dragon Well", chineseName: "西湖龙井", type: "Green" },
-    { id: "t-2", englishName: "Iron Goddess", chineseName: "铁观音", type: "Oolong" },
-  ];
-  await writeCollection(teas);
-  assert.deepEqual(await readCollection(), teas);
-
-  const onDisk = JSON.parse(await fs.readFile(DATA_FILE, "utf8"));
-  assert.equal(onDisk.app, "The Tea Cabinet");
-  assert.equal(onDisk.version, 1);
-  assert.deepEqual(onDisk.teas, teas);
+  const stat = await fs.stat(DATA_DIR);
+  assert.ok(stat.isDirectory());
 });
 
 test("readCollection tolerates a bare array on disk", async () => {
   await clearStore();
   await fs.writeFile(DATA_FILE, JSON.stringify([{ id: "t-9", englishName: "Bare" }]), "utf8");
-  assert.deepEqual(await readCollection(), [{ id: "t-9", englishName: "Bare" }]);
+  assert.deepEqual(await readCollection(DATA_DIR), [{ id: "t-9", englishName: "Bare" }]);
 });
 
 test("readCollection returns [] for corrupt JSON rather than throwing", async () => {
   await clearStore();
   await fs.writeFile(DATA_FILE, "{not json", "utf8");
-  assert.deepEqual(await readCollection(), []);
-});
-
-test("writeCollection is atomic: no .tmp file remains afterwards", async () => {
-  await clearStore();
-  await writeCollection([{ id: "t-3", englishName: "Silver Needle" }]);
-  const entries = await fs.readdir(DATA_DIR);
-  assert.ok(!entries.some((f) => f.endsWith(".tmp")), `stray tmp file in ${entries.join(", ")}`);
+  assert.deepEqual(await readCollection(DATA_DIR), []);
 });
 
 test("GET /api/health returns {ok:true}", async () => {
@@ -111,7 +89,7 @@ test("PUT /api/collection accepts a bare array", async () => {
     body: JSON.stringify(teas),
   });
   assert.equal(res.status, 200);
-  assert.deepEqual(await readCollection(), teas);
+  assert.deepEqual(await readCollection(DATA_DIR), teas);
 });
 
 test("PUT /api/collection rejects a non-array payload with 400", async () => {

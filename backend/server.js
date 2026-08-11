@@ -2,14 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import cors from "cors";
+import { readCollection, writeCollection } from "./lib/store.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-
-const DATA_FILE = path.join(DATA_DIR, "collection.json");
-const TMP_FILE = `${DATA_FILE}.tmp`;
 
 export const app = express();
 // Label photos travel as base64 data URLs, so the body limit has to be generous.
@@ -18,32 +16,6 @@ app.use(cors());
 
 export async function ensureStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    await fs.access(DATA_FILE);
-  } catch (e) {
-    await fs.writeFile(DATA_FILE, JSON.stringify({ teas: [] }), "utf8");
-  }
-}
-
-export async function readCollection() {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    const data = JSON.parse(raw);
-    if (Array.isArray(data)) return data;
-    if (data && Array.isArray(data.teas)) return data.teas;
-    return [];
-  } catch (e) {
-    return [];
-  }
-}
-
-// Atomic write: fill a temp file, then rename over the real one. A crash
-// mid-write leaves the previous collection intact rather than a half file.
-export async function writeCollection(teas) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const payload = { app: "The Tea Cabinet", version: 1, teas };
-  await fs.writeFile(TMP_FILE, JSON.stringify(payload, null, 2), "utf8");
-  await fs.rename(TMP_FILE, DATA_FILE);
 }
 
 app.get("/api/health", (req, res) => {
@@ -52,8 +24,7 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/collection", async (req, res) => {
   try {
-    const teas = await readCollection();
-    res.json({ teas });
+    res.json({ teas: await readCollection(DATA_DIR) });
   } catch (e) {
     res.status(500).json({ error: "Could not read the collection." });
   }
@@ -67,7 +38,7 @@ app.put("/api/collection", async (req, res) => {
     return;
   }
   try {
-    await writeCollection(teas);
+    await writeCollection(DATA_DIR, teas);
     res.json({ ok: true, count: teas.length });
   } catch (e) {
     res.status(500).json({ error: "Could not save the collection." });
@@ -138,7 +109,7 @@ const isDirectRun = process.argv[1] && import.meta.url === `file://${path.resolv
 if (isDirectRun) {
   await ensureStore();
   app.listen(PORT, () => {
-    console.log(`Tea Cabinet API listening on :${PORT} (data: ${DATA_FILE})`);
+    console.log(`Tea Cabinet API listening on :${PORT} (data: ${DATA_DIR})`);
   });
 }
 
