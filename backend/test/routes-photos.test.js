@@ -59,3 +59,16 @@ test("POST /api/photos refuses a non-image content type", async () => {
   });
   assert.equal(res.status, 415);
 });
+
+test("POST /api/photos over the 8MB per-photo limit is 413", async () => {
+  // Bigger than the 8MB limit savePhoto enforces, but under the 10mb body
+  // parser limit, so this exercises the TOO_LARGE -> 413 translation rather
+  // than express.raw()'s own limit.
+  const bytes = Buffer.alloc(9 * 1024 * 1024, 0xff);
+  const res = await fetch(`${base}/api/photos`, {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: bytes,
+  });
+  assert.equal(res.status, 413);
+});

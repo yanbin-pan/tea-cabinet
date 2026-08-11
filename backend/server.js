@@ -72,15 +72,19 @@ app.post("/api/photos", photoBody, async (req, res) => {
 });
 
 app.get("/api/photos/:id", async (req, res) => {
-  const bytes = await readPhoto(DATA_DIR, req.params.id);
-  if (!bytes) {
-    res.status(404).json({ error: "No such photo." });
-    return;
+  try {
+    const bytes = await readPhoto(DATA_DIR, req.params.id);
+    if (!bytes) {
+      res.status(404).json({ error: "No such photo." });
+      return;
+    }
+    res.set("Content-Type", "image/jpeg");
+    // Ids are random and a photo's bytes never change, so this can be cached hard.
+    res.set("Cache-Control", "private, max-age=31536000, immutable");
+    res.send(bytes);
+  } catch (e) {
+    res.status(500).json({ error: "Could not read that photo." });
   }
-  res.set("Content-Type", "image/jpeg");
-  // Ids are random and a photo's bytes never change, so this can be cached hard.
-  res.set("Cache-Control", "private, max-age=31536000, immutable");
-  res.send(bytes);
 });
 
 app.post("/api/scan", async (req, res) => {
