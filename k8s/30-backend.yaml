@@ -38,6 +38,12 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            # Defense-in-depth: the image's Dockerfile already sets this, but
+            # the trust-root gate around ACCESS_TEST_JWKS (backend/server.js)
+            # depends on it, so it is pinned here too rather than left to an
+            # image-build detail nobody is required to notice.
+            - name: NODE_ENV
+              value: production
             - name: PORT
               value: "8080"
             - name: DATA_DIR

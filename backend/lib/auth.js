@@ -16,6 +16,17 @@ export function accessConfig(env = process.env) {
   return { issuer, audience, jwksUrl: `${issuer}/cdn-cgi/access/certs` };
 }
 
+// ACCESS_TEST_JWKS lets tests substitute a local key set for Cloudflare's, so
+// they can run signature verification offline. That is a change to *which
+// key is trusted*, not just how it's checked — so it must be structurally
+// impossible for it to take effect in production, where a stray env var
+// (leftover from a misconfigured deploy, a copy-pasted manifest, etc.) could
+// otherwise let an attacker-controlled key set replace Cloudflare's.
+export function testJwksOverride(env = process.env) {
+  if (env.NODE_ENV === "production") return null;
+  return env.ACCESS_TEST_JWKS || null;
+}
+
 export function remoteJwks(jwksUrl) {
   // Handles caching, kid matching and refetching on an unknown kid, which is
   // what makes Cloudflare's key rotation a non-event here.

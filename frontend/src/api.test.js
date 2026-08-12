@@ -118,6 +118,37 @@ describe("loadCollection", () => {
     const fetchImpl = async () => response(200, { teas: [] });
     expect((await loadCollection({ fetchImpl })).email).toBe(null);
   });
+
+  // A legitimately empty server response (unmigrated data, wrong directory,
+  // an old pod mid-rollout) must not destroy the last local backup.
+  test("an empty server response leaves an existing non-empty mirror intact", async () => {
+    localStorage.setItem("cha:collection:v2", JSON.stringify([{ id: "precious" }]));
+    const fetchImpl = async () => response(200, { teas: [] });
+    const out = await loadCollection({ fetchImpl });
+    expect(out.source).toBe("server");
+    expect(out.teas).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("cha:collection:v2"))).toEqual([{ id: "precious" }]);
+  });
+
+  test("a non-empty server response still overwrites the mirror", async () => {
+    localStorage.setItem("cha:collection:v2", JSON.stringify([{ id: "stale" }]));
+    const fetchImpl = async () => response(200, { teas: [{ id: "fresh" }] });
+    await loadCollection({ fetchImpl });
+    expect(JSON.parse(localStorage.getItem("cha:collection:v2"))).toEqual([{ id: "fresh" }]);
+  });
+
+  test("an empty server response with an absent mirror is fine", async () => {
+    const fetchImpl = async () => response(200, { teas: [] });
+    await loadCollection({ fetchImpl });
+    expect(JSON.parse(localStorage.getItem("cha:collection:v2"))).toEqual([]);
+  });
+
+  test("an empty server response with an already-empty mirror is fine", async () => {
+    localStorage.setItem("cha:collection:v2", JSON.stringify([]));
+    const fetchImpl = async () => response(200, { teas: [] });
+    await loadCollection({ fetchImpl });
+    expect(JSON.parse(localStorage.getItem("cha:collection:v2"))).toEqual([]);
+  });
 });
 
 describe("uploadPhoto", () => {

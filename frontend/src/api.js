@@ -98,7 +98,21 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
   }
   const data = await parseJson(res);
   const teas = Array.isArray(data && data.teas) ? data.teas : [];
-  mirror(teas);
+  // An empty server response is authoritative for what to show, but it must
+  // not be allowed to clobber a non-empty local mirror: a migration that
+  // hasn't run yet, ran against the wrong directory, or an old pod still
+  // serving mid-rollout can all legitimately return {teas: []} while the
+  // user's real data is untouched on the server. Only overwrite the mirror
+  // when the server actually gave us something, or when there is nothing
+  // worth protecting.
+  if (teas.length > 0) {
+    mirror(teas);
+  } else {
+    const existing = readMirror();
+    if (!existing || existing.length === 0) {
+      mirror(teas);
+    }
+  }
   return { teas, source: "server", email: typeof data.email === "string" ? data.email : null };
 }
 

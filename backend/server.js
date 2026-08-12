@@ -1,11 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
-import cors from "cors";
 import { createLocalJWKSet } from "jose";
 import { readCollection, writeCollection } from "./lib/store.js";
 import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
-import { accessConfig, createVerifier, remoteJwks, requireAccess } from "./lib/auth.js";
+import { accessConfig, createVerifier, remoteJwks, requireAccess, testJwksOverride } from "./lib/auth.js";
 import { userKey, userDir } from "./lib/paths.js";
 
 const PORT = process.env.PORT || 8080;
@@ -17,16 +16,21 @@ const access = accessConfig();
 // ACCESS_TEST_JWKS lets the test suite supply a local key set. It is the only
 // concession to testability here, and it changes nothing about how a token is
 // checked — signature, issuer, audience and expiry are validated identically.
-const jwks = process.env.ACCESS_TEST_JWKS
-  ? createLocalJWKSet(JSON.parse(process.env.ACCESS_TEST_JWKS))
-  : remoteJwks(access.jwksUrl);
+// testJwksOverride (lib/auth.js) is what makes this impossible in production:
+// it refuses to hand the override back once NODE_ENV is "production", no
+// matter what ACCESS_TEST_JWKS contains.
+const testJwks = testJwksOverride();
+const jwks = testJwks ? createLocalJWKSet(JSON.parse(testJwks)) : remoteJwks(access.jwksUrl);
 
 const verify = createVerifier({ issuer: access.issuer, audience: access.audience, jwks });
 
 export const app = express();
 // Photos are stored separately now, so the collection document holds metadata only.
 app.use(express.json({ limit: "5mb" }));
-app.use(cors());
+// No cors() here: the SPA is served same-origin (VITE_API_BASE is unset, so
+// the frontend only ever calls relative /api/... paths), so there is no
+// cross-origin caller to allow in the first place. Adding it back would only
+// widen who can call these authenticated routes from a browser.
 
 // Deliberately does not migrate anything. Moving the pre-multi-tenancy layout
 // into a per-user cabinet is a one-off operator step performed with the
@@ -57,6 +61,7 @@ app.get("/api/collection", async (req, res) => {
   try {
     res.json({ teas: await readCollection(cabinetOf(req)), email: req.userEmail });
   } catch (e) {
+    console.error(`GET /api/collection failed for ${req.userEmail}:`, e);
     res.status(500).json({ error: "Could not read the collection." });
   }
 });
@@ -73,6 +78,7 @@ app.put("/api/collection", async (req, res) => {
     dir = cabinetOf(req);
     await writeCollection(dir, teas, { email: req.userEmail });
   } catch (e) {
+    console.error(`PUT /api/collection failed for ${req.userEmail}:`, e);
     res.status(500).json({ error: "Could not save the collection." });
     return;
   }
@@ -95,7 +101,9 @@ app.put("/api/collection", async (req, res) => {
     const referenced = teas.map((t) => t && t.photo).filter((p) => typeof p === "string");
     await sweepOrphans(dir, referenced);
   } catch (e) {
-    // Intentionally ignored; the next save will try again.
+    // Intentionally ignored; the next save will try again. Logged so a swept-
+    // photo failure leaves a trace instead of vanishing entirely.
+    console.error(`sweepOrphans failed for ${req.userEmail}:`, e);
   }
 
   res.json({ ok: true, count: teas.length });
@@ -122,6 +130,7 @@ app.post("/api/photos", photoBody, async (req, res) => {
       res.status(413).json({ error: "That photo is too large." });
       return;
     }
+    console.error(`POST /api/photos failed for ${req.userEmail}:`, e);
     res.status(500).json({ error: "Could not store that photo." });
   }
 });
@@ -138,6 +147,7 @@ app.get("/api/photos/:id", async (req, res) => {
     res.set("Cache-Control", "private, max-age=31536000, immutable");
     res.send(bytes);
   } catch (e) {
+    console.error(`GET /api/photos/${req.params.id} failed for ${req.userEmail}:`, e);
     res.status(500).json({ error: "Could not read that photo." });
   }
 });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPair, SignJWT, exportJWK, createLocalJWKSet } from "jose";
-import { accessConfig, createVerifier, requireAccess } from "../lib/auth.js";
+import { accessConfig, createVerifier, requireAccess, testJwksOverride } from "../lib/auth.js";
 
 const ISSUER = "https://example.cloudflareaccess.com";
 const AUDIENCE = "test-audience-tag";
@@ -92,6 +92,28 @@ test("requireAccess ignores the email header entirely", async () => {
     () => assert.fail("next must not be called")
   );
   assert.equal(status, 401);
+});
+
+// A stray ACCESS_TEST_JWKS in the production environment must never be able
+// to swap the trust root out from under real Cloudflare Access tokens.
+test("testJwksOverride refuses ACCESS_TEST_JWKS in production, regardless of value", () => {
+  assert.equal(
+    testJwksOverride({ NODE_ENV: "production", ACCESS_TEST_JWKS: JSON.stringify({ keys: [] }) }),
+    null
+  );
+  assert.equal(testJwksOverride({ NODE_ENV: "production" }), null);
+});
+
+test("testJwksOverride honors ACCESS_TEST_JWKS outside production", () => {
+  const keys = JSON.stringify({ keys: [] });
+  assert.equal(testJwksOverride({ ACCESS_TEST_JWKS: keys }), keys);
+  assert.equal(testJwksOverride({ NODE_ENV: "test", ACCESS_TEST_JWKS: keys }), keys);
+  assert.equal(testJwksOverride({ NODE_ENV: "development", ACCESS_TEST_JWKS: keys }), keys);
+});
+
+test("testJwksOverride returns null when ACCESS_TEST_JWKS is absent", () => {
+  assert.equal(testJwksOverride({}), null);
+  assert.equal(testJwksOverride({ NODE_ENV: "test" }), null);
 });
 
 test("requireAccess attaches the verified email and continues", async () => {
