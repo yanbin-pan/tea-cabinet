@@ -7,7 +7,6 @@ import { readCollection, writeCollection } from "./lib/store.js";
 import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
 import { accessConfig, createVerifier, remoteJwks, requireAccess } from "./lib/auth.js";
 import { userKey, userDir } from "./lib/paths.js";
-import { migrateLegacy } from "./lib/migrate.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
@@ -29,10 +28,18 @@ export const app = express();
 app.use(express.json({ limit: "5mb" }));
 app.use(cors());
 
+// Deliberately does not migrate anything. Moving the pre-multi-tenancy layout
+// into a per-user cabinet is a one-off operator step performed with the
+// deployment scaled to zero, not something a starting replica does.
+//
+// It was written as an automatic startup migration first. With two replicas
+// sharing one NFS directory, and one of them possibly serving writes while the
+// other migrates, every version of it failed review: fixing the rename race
+// exposed a destination-overwrite window, and fixing that left photos stranded
+// in a live cabinet where the orphan sweep would later delete them. That is a
+// lot of unverifiable concurrency risk for an operation performed exactly once.
 export async function ensureStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  const moved = await migrateLegacy(DATA_DIR, process.env.OWNER_EMAIL || "");
-  if (moved) console.log("Migrated the legacy collection into the owner's cabinet.");
 }
 
 app.get("/api/health", (req, res) => {
