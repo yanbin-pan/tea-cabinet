@@ -7,6 +7,7 @@ import { readCollection, writeCollection } from "./lib/store.js";
 import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
 import { accessConfig, createVerifier, remoteJwks, requireAccess } from "./lib/auth.js";
 import { userKey, userDir } from "./lib/paths.js";
+import { migrateLegacy } from "./lib/migrate.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
@@ -30,6 +31,8 @@ app.use(cors());
 
 export async function ensureStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
+  const moved = await migrateLegacy(DATA_DIR, process.env.OWNER_EMAIL || "");
+  if (moved) console.log("Migrated the legacy collection into the owner's cabinet.");
 }
 
 app.get("/api/health", (req, res) => {
