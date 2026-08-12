@@ -1989,29 +1989,27 @@ to save."
 
 ### Task 12: Deploy it
 
-**Files:**
-- Modify: `k8s/30-backend.yaml` (env vars)
-- Modify: `k8s/10-pvc.yaml` (5Gi)
-- Modify: `k8s/50-ingress.yaml` (drop the basic-auth middleware)
-- Modify: `k8s/60-basic-auth.yaml` (remove the basicAuth Middleware)
-- Modify: `k8s/kustomization.yaml` (drop the secret)
-- Delete: `k8s/70-basic-auth-secret.sops.yaml`
-- Modify: `.github/workflows/verify.yaml` (update the middleware assertion)
-- **Private infrastructure repo:** `terraform/cloudflare/access.tf`, `docs/apps/tea-cabinet.md`
+**Ordering is the whole task.** Any other order produces a crash-looping
+backend, a total 401 lockout, or an empty cabinet. Do not reorder these.
 
-**Interfaces:**
-- Consumes: everything above.
-- Produces: the running deployment.
+**Files:** `k8s/30-backend.yaml`, `k8s/10-pvc.yaml`, `k8s/50-ingress.yaml`,
+`k8s/60-basic-auth.yaml`, `k8s/kustomization.yaml`, delete
+`k8s/70-basic-auth-secret.sops.yaml`, `.github/workflows/verify.yaml`; and in the
+**private infrastructure repo** `terraform/cloudflare/access.tf` and
+`docs/apps/tea-cabinet.md`.
 
-- [ ] **Step 1: Add the Access application (private repo)**
+- [ ] **Step 1: Create the Access application first (private repo)**
 
-In `terraform/cloudflare/access.tf`, add an application and policy for the app's hostname listing the family addresses, following the existing `admin` application as the pattern. Then:
+Nothing else can work until the edge injects `Cf-Access-Jwt-Assertion`. Add an
+application and policy for the app's hostname alongside the existing `admin` one,
+listing the family addresses, then `terraform apply`.
 
-```bash
-cd terraform/cloudflare && terraform apply
-```
+Record the application's **audience tag** from the output — Step 2 needs it. It is
+an identifier, not a secret.
 
-Record the application's **audience tag** from the output — Task 12 Step 2 needs it. It is an identifier, not a secret.
+Until this exists, the API returns a bare `401` for every request while
+`/api/health` still passes, so pods report Ready and the deploy looks green while
+the user is completely locked out. That is the most misleading failure in this plan.
 
 - [ ] **Step 2: Configure the backend**
 
@@ -2021,79 +2019,101 @@ In `k8s/30-backend.yaml`, add to the container `env`:
             - name: ACCESS_TEAM_DOMAIN
               value: <your-team>.cloudflareaccess.com
             - name: ACCESS_AUD
-              value: <the audience tag from step 1>
-            - name: OWNER_EMAIL
-              value: <the address whose cabinet inherits any existing data>
+              value: <the audience tag from Step 1>
 ```
+
+**Do not add `OWNER_EMAIL`.** Nothing reads it — it was for the automatic
+migration that was withdrawn in Task 10. Setting it invites the reader to assume
+the data move is handled, and it is not.
+
+`accessConfig()` throws at import when either variable is missing, so a backend
+deployed without them crash-loops rather than starting unauthenticated.
 
 - [ ] **Step 3: Raise the volume request**
 
-In `k8s/10-pvc.yaml`, change `storage: 1Gi` to `storage: 5Gi`, and note in the comment that this documents intent rather than enforcing a quota — the NFS provisioner applies none.
+In `k8s/10-pvc.yaml`, change `storage: 1Gi` to `5Gi`, noting in the comment that
+this documents intent rather than enforcing a quota — the NFS provisioner applies
+none, and a pod sees the whole filesystem regardless.
 
-- [ ] **Step 4: Remove basic auth**
+- [ ] **Step 4: Remove basic auth from BOTH ingresses**
 
-Delete `k8s/70-basic-auth-secret.sops.yaml`, remove the `tea-basic-auth` Middleware from `k8s/60-basic-auth.yaml` (keep `tea-rate-limit`), remove that file from `resources:` in `k8s/kustomization.yaml`, and reduce the ingress annotation to the rate limiter alone:
+There are two Ingress objects — `tea-cabinet` and `tea-cabinet-photos` — and both
+carry `tea-cabinet-tea-basic-auth@kubernetescrd`. Removing the Middleware while
+leaving either reference behind makes that router **404**, so photos would break
+while the collection API kept working: blank thumbnails and failing imports.
 
-```yaml
-    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd
-```
+Delete `k8s/70-basic-auth-secret.sops.yaml`, remove the `tea-basic-auth`
+Middleware from `k8s/60-basic-auth.yaml` (keep both rate limiters), drop the
+secret from `resources:` in `k8s/kustomization.yaml`, and reduce **both**
+annotations to their rate limiter alone.
 
-- [ ] **Step 5: Update the CI assertion**
+- [ ] **Step 5: Update the CI assertions**
 
-In `.github/workflows/verify.yaml`, replace the middleware-chain assertion with:
+Replace the basic-auth assertions with:
 
 ```bash
           grep -q 'router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd' /tmp/rendered.yaml \
-            || fail "The rate-limit middleware is missing from the ingress."
+            || fail "The collection ingress lost its rate limiter."
 
-          # Identity now comes from the verified Access assertion, so the API
-          # must be configured for it or every request would be denied.
-          grep -q 'ACCESS_TEAM_DOMAIN' /tmp/rendered.yaml \
-            || fail "ACCESS_TEAM_DOMAIN is not set on the backend."
-          grep -q 'ACCESS_AUD' /tmp/rendered.yaml \
-            || fail "ACCESS_AUD is not set on the backend."
+          grep -q 'router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The photo ingress lost its rate limiter."
+
+          # Basic auth is gone entirely; a leftover reference 404s that router.
+          [ "$(grep -c 'tea-basic-auth' /tmp/rendered.yaml)" = "0" ] \
+            || fail "A basic-auth reference survived; its router will 404."
+
+          grep -q 'ACCESS_TEAM_DOMAIN' /tmp/rendered.yaml || fail "ACCESS_TEAM_DOMAIN is not set."
+          grep -q 'ACCESS_AUD' /tmp/rendered.yaml || fail "ACCESS_AUD is not set."
 ```
 
-- [ ] **Step 6: Verify the render before pushing**
+- [ ] **Step 6: Verify the render, then push**
 
 ```bash
 kubectl kustomize k8s > /tmp/rendered.yaml
 grep -c 'tea-basic-auth' /tmp/rendered.yaml   # expect 0
-grep 'ACCESS_' /tmp/rendered.yaml
+grep 'ACCESS_' /tmp/rendered.yaml             # expect both variables
 ```
 
-- [ ] **Step 7: Commit and deploy**
+- [ ] **Step 7: Move the data, with nothing serving**
 
-```bash
-git add k8s .github/workflows/verify.yaml
-git commit -m "Move access control from a shared password to per-person identity
+The image now reads `users/<hash>/`; the existing collection is still at the root,
+so without this step the owner signs in to an empty cabinet.
 
-Basic auth was one credential for one person; a family needs one
-identity each. The API verifies the Access assertion itself and fails
-closed, so this is stricter than what it replaces despite the ingress
-carrying one middleware fewer."
-git push
-```
+Follow "One-off: moving the pre-multi-tenancy data into a cabinet" in the private
+repo's `docs/apps/tea-cabinet.md`. It suspends Flux (a plain `kubectl scale` is
+reverted within 10 minutes by reconciliation), scales to zero, records the tea and
+photo counts, moves `collection.json` and `photos/` while refusing to overwrite an
+existing destination, then scales up and resumes.
+
+Doing this with the deployment scaled down also removes the mixed-version window
+in which old and new pods serve different layouts for the same user.
 
 - [ ] **Step 8: Verify in production**
 
 ```bash
-flux reconcile kustomization tea-cabinet --with-source
 kubectl -n tea-cabinet rollout status deploy/backend deploy/frontend
 
 # No Access session: Cloudflare intercepts before the app is reached.
-curl -sS -o /dev/null -w '%{http_code}\n' https://<host>/api/collection    # expect 302
+curl -sS -o /dev/null -w '%{http_code}\n' https://<host>/api/collection
 
 # Inside the cluster, past Cloudflare, the API still refuses an unsigned request.
 kubectl -n tea-cabinet run probe --rm -i --restart=Never --image=curlimages/curl -- \
   curl -sS -o /dev/null -w '%{http_code}\n' http://backend:8080/api/collection   # expect 401
 ```
 
-That second check is the one that matters: it proves the API is not merely hiding behind the proxy.
+That second check is the one that matters: it proves the API is not merely hiding
+behind the proxy. Then sign in and confirm the tea and photo counts match Step 7.
+
+Also check what an **expired** session returns to an XHR. If Cloudflare answers
+with a 302 to its login host, the browser's cross-origin fetch fails and the app
+reports "Offline — showing your last saved copy" rather than "session expired";
+adjust the UI copy if so.
 
 - [ ] **Step 9: Update the private runbook**
 
-Revise `docs/apps/tea-cabinet.md` in the infrastructure repo: replace the basic-auth and password-rotation sections with how to add or remove a family member (edit `access.tf`, `terraform apply`), and note that `ACCESS_AUD` changes if the Access application is recreated.
+Replace the basic-auth and password-rotation sections with how to add or remove a
+family member (edit `access.tf`, `terraform apply`), and note that `ACCESS_AUD`
+changes if the Access application is ever recreated.
 
 ---
 
