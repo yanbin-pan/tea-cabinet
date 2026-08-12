@@ -3,17 +3,48 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { generateKeyPair, SignJWT, exportJWK } from "jose";
 
 const DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "tea-routes-sweep-"));
 process.env.DATA_DIR = DATA_DIR;
+process.env.ACCESS_TEAM_DOMAIN = "example.cloudflareaccess.com";
+process.env.ACCESS_AUD = "test-audience-tag";
+
+const { publicKey, privateKey } = await generateKeyPair("RS256");
+const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "RS256" };
+
+// The server exposes a seam so tests can supply a local key set instead of
+// fetching Cloudflare's. Nothing else about the verification path changes.
+process.env.ACCESS_TEST_JWKS = JSON.stringify({ keys: [jwk] });
 
 const { app } = await import("../server.js");
 const { savePhoto, readPhoto } = await import("../lib/photos.js");
+const { userKey, userDir } = await import("../lib/paths.js");
 
 const server = app.listen(0);
 await new Promise((r) => server.once("listening", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 test.after(() => server.close());
+
+const EMAIL = "sweep-tester@example.com";
+// The PUT route sweeps within the caller's own cabinet, so photos set up
+// directly via savePhoto/readPhoto for this test must live in that same
+// cabinet directory rather than at DATA_DIR's root.
+const CABINET_DIR = userDir(DATA_DIR, userKey(EMAIL));
+
+async function tokenFor(email) {
+  return new SignJWT({ email })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer("https://example.cloudflareaccess.com")
+    .setAudience("test-audience-tag")
+    .setIssuedAt().setExpirationTime("5m")
+    .sign(privateKey);
+}
+
+async function as(email, url, init = {}) {
+  const headers = { ...(init.headers || {}), "Cf-Access-Jwt-Assertion": await tokenFor(email) };
+  return fetch(`${base}${url}`, { ...init, headers });
+}
 
 async function age(dir, id, ms) {
   const file = path.join(dir, "photos", `${id}.jpg`);
@@ -22,26 +53,26 @@ async function age(dir, id, ms) {
 }
 
 test("saving a collection removes old photos nothing refers to", async () => {
-  const kept = await savePhoto(DATA_DIR, Buffer.from("kept"));
-  const orphan = await savePhoto(DATA_DIR, Buffer.from("orphan"));
-  await age(DATA_DIR, kept, 48 * 60 * 60 * 1000);
-  await age(DATA_DIR, orphan, 48 * 60 * 60 * 1000);
+  const kept = await savePhoto(CABINET_DIR, Buffer.from("kept"));
+  const orphan = await savePhoto(CABINET_DIR, Buffer.from("orphan"));
+  await age(CABINET_DIR, kept, 48 * 60 * 60 * 1000);
+  await age(CABINET_DIR, orphan, 48 * 60 * 60 * 1000);
 
-  const res = await fetch(`${base}/api/collection`, {
+  const res = await as(EMAIL, "/api/collection", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ teas: [{ id: "t1", englishName: "Keeper", photo: kept }] }),
   });
   assert.equal(res.status, 200);
 
-  assert.notEqual(await readPhoto(DATA_DIR, kept), null, "a referenced photo survives");
-  assert.equal(await readPhoto(DATA_DIR, orphan), null, "an old orphan is reclaimed");
+  assert.notEqual(await readPhoto(CABINET_DIR, kept), null, "a referenced photo survives");
+  assert.equal(await readPhoto(CABINET_DIR, orphan), null, "an old orphan is reclaimed");
 });
 
 test("a freshly uploaded photo is never swept, even unreferenced", async () => {
-  const justUploaded = await savePhoto(DATA_DIR, Buffer.from("in flight"));
+  const justUploaded = await savePhoto(CABINET_DIR, Buffer.from("in flight"));
 
-  const res = await fetch(`${base}/api/collection`, {
+  const res = await as(EMAIL, "/api/collection", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ teas: [] }),
@@ -49,7 +80,7 @@ test("a freshly uploaded photo is never swept, even unreferenced", async () => {
   assert.equal(res.status, 200);
 
   assert.notEqual(
-    await readPhoto(DATA_DIR, justUploaded), null,
+    await readPhoto(CABINET_DIR, justUploaded), null,
     "a photo whose tea has not been saved yet must survive"
   );
 });
@@ -60,7 +91,7 @@ test("a freshly uploaded photo is never swept, even unreferenced", async () => {
 // This test only pins down that a save whose sweep has nothing to reclaim
 // still returns a normal ok response.
 test("a save with nothing for the sweep to reclaim still returns ok", async () => {
-  const res = await fetch(`${base}/api/collection`, {
+  const res = await as(EMAIL, "/api/collection", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ teas: [{ id: "t2", englishName: "No photo", photo: null }] }),

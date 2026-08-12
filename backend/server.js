@@ -2,13 +2,26 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import express from "express";
 import cors from "cors";
+import { createLocalJWKSet } from "jose";
 import { readCollection, writeCollection } from "./lib/store.js";
 import { savePhoto, readPhoto, sweepOrphans } from "./lib/photos.js";
+import { accessConfig, createVerifier, remoteJwks, requireAccess } from "./lib/auth.js";
+import { userKey, userDir } from "./lib/paths.js";
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || "./data";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+
+const access = accessConfig();
+// ACCESS_TEST_JWKS lets the test suite supply a local key set. It is the only
+// concession to testability here, and it changes nothing about how a token is
+// checked — signature, issuer, audience and expiry are validated identically.
+const jwks = process.env.ACCESS_TEST_JWKS
+  ? createLocalJWKSet(JSON.parse(process.env.ACCESS_TEST_JWKS))
+  : remoteJwks(access.jwksUrl);
+
+const verify = createVerifier({ issuer: access.issuer, audience: access.audience, jwks });
 
 export const app = express();
 // Photos are stored separately now, so the collection document holds metadata only.
@@ -23,9 +36,16 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
+// Everything past this line requires a verified identity.
+app.use("/api", requireAccess(verify));
+
+function cabinetOf(req) {
+  return userDir(DATA_DIR, userKey(req.userEmail));
+}
+
 app.get("/api/collection", async (req, res) => {
   try {
-    res.json({ teas: await readCollection(DATA_DIR) });
+    res.json({ teas: await readCollection(cabinetOf(req)) });
   } catch (e) {
     res.status(500).json({ error: "Could not read the collection." });
   }
@@ -38,8 +58,9 @@ app.put("/api/collection", async (req, res) => {
     res.status(400).json({ error: "Expected { teas: [...] } or an array." });
     return;
   }
+  const dir = cabinetOf(req);
   try {
-    await writeCollection(DATA_DIR, teas);
+    await writeCollection(dir, teas, { email: req.userEmail });
   } catch (e) {
     res.status(500).json({ error: "Could not save the collection." });
     return;
@@ -61,7 +82,7 @@ app.put("/api/collection", async (req, res) => {
   // throw. See backend/test/photos.test.js for the tests that pin that down.
   try {
     const referenced = teas.map((t) => t && t.photo).filter((p) => typeof p === "string");
-    await sweepOrphans(DATA_DIR, referenced);
+    await sweepOrphans(dir, referenced);
   } catch (e) {
     // Intentionally ignored; the next save will try again.
   }
@@ -83,7 +104,7 @@ app.post("/api/photos", photoBody, async (req, res) => {
     return;
   }
   try {
-    const id = await savePhoto(DATA_DIR, req.body);
+    const id = await savePhoto(cabinetOf(req), req.body);
     res.json({ id });
   } catch (e) {
     if (e.code === "TOO_LARGE") {
@@ -96,7 +117,7 @@ app.post("/api/photos", photoBody, async (req, res) => {
 
 app.get("/api/photos/:id", async (req, res) => {
   try {
-    const bytes = await readPhoto(DATA_DIR, req.params.id);
+    const bytes = await readPhoto(cabinetOf(req), req.params.id);
     if (!bytes) {
       res.status(404).json({ error: "No such photo." });
       return;
