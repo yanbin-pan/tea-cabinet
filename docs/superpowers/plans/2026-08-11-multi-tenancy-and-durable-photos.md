@@ -1849,154 +1849,33 @@ someone can forget to write. Health stays open for the kubelet probe."
 
 ---
 
-### Task 10: Migrate the existing single-tenant cabinet
+### Task 10: Move the existing cabinet — SUPERSEDED, no code
 
-**Files:**
-- Create: `backend/lib/migrate.js`
-- Create: `backend/test/migrate.test.js`
-- Modify: `backend/server.js` (call it from `ensureStore`)
+**Outcome:** this task originally specified an automatic startup migration
+(`backend/lib/migrate.js`). It was implemented, reviewed twice, and **withdrawn**.
 
-**Interfaces:**
-- Consumes: Task 8.
-- Produces: `migrateLegacy(dataDir, ownerEmail) → Promise<boolean>` — moves a pre-Phase-2 `collection.json` and `photos/` into the owner's cabinet, once.
+Why: the deployment runs two replicas over one NFS directory, and `ensureStore`
+runs while the *other* replica may be serving writes. `fs.rename` silently
+overwrites its destination, so the check-then-rename shape had a window in which
+a live save could be clobbered by stale data. Replacing `rename` with
+`fs.link` (which fails `EEXIST`) closed that, and reordering the two moves made
+a crash resumable — but the combination then allowed photos to be relocated into
+a live cabinet before ownership was resolved, where the orphan sweep would later
+delete them. Three review rounds, three distinct data-loss paths.
 
-- [ ] **Step 1: Write the failing test**
+The operation happens **once, for one person**. Performing it with the
+deployment scaled to zero removes every interleaving the code was defending
+against, and needs no code at all.
 
-Create `backend/test/migrate.test.js`:
+**What to do instead:** follow the runbook in the private infrastructure
+repository (`docs/apps/tea-cabinet.md`, "One-off: moving the pre-multi-tenancy
+data into a cabinet"). It scales the backend to zero, records the tea and photo
+counts, `mv`s `collection.json` and `photos/` into `users/<sha256(email)>/`,
+scales back up, and re-checks the counts. `sha256` of the lowercased address is
+reproducible with `shasum -a 256`, so the step needs no application tooling.
 
-```js
-import test from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { migrateLegacy } from "../lib/migrate.js";
-import { userKey, userDir } from "../lib/paths.js";
-
-async function legacyDir() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "tea-migrate-"));
-  await fs.writeFile(path.join(dir, "collection.json"), JSON.stringify({ teas: [{ id: "old" }] }), "utf8");
-  await fs.mkdir(path.join(dir, "photos"), { recursive: true });
-  await fs.writeFile(path.join(dir, "photos", `${"a".repeat(32)}.jpg`), Buffer.from("bytes"));
-  return dir;
-}
-
-test("moves a legacy collection and its photos into the owner's cabinet", async () => {
-  const dir = await legacyDir();
-  assert.equal(await migrateLegacy(dir, "owner@example.com"), true);
-
-  const owner = userDir(dir, userKey("owner@example.com"));
-  const moved = JSON.parse(await fs.readFile(path.join(owner, "collection.json"), "utf8"));
-  assert.equal(moved.teas[0].id, "old");
-  assert.ok(await fs.stat(path.join(owner, "photos", `${"a".repeat(32)}.jpg`)));
-
-  await assert.rejects(() => fs.stat(path.join(dir, "collection.json")), "the legacy file is moved, not copied");
-});
-
-test("is idempotent — a second run does nothing", async () => {
-  const dir = await legacyDir();
-  assert.equal(await migrateLegacy(dir, "owner@example.com"), true);
-  assert.equal(await migrateLegacy(dir, "owner@example.com"), false);
-});
-
-test("does nothing when there is no legacy collection", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "tea-migrate-empty-"));
-  assert.equal(await migrateLegacy(dir, "owner@example.com"), false);
-});
-
-test("never overwrites an existing cabinet", async () => {
-  const dir = await legacyDir();
-  const owner = userDir(dir, userKey("owner@example.com"));
-  await fs.mkdir(owner, { recursive: true });
-  await fs.writeFile(path.join(owner, "collection.json"), JSON.stringify({ teas: [{ id: "current" }] }), "utf8");
-
-  assert.equal(await migrateLegacy(dir, "owner@example.com"), false);
-  const kept = JSON.parse(await fs.readFile(path.join(owner, "collection.json"), "utf8"));
-  assert.equal(kept.teas[0].id, "current", "existing data wins over legacy data");
-});
-
-test("does nothing without an owner address", async () => {
-  const dir = await legacyDir();
-  assert.equal(await migrateLegacy(dir, ""), false);
-});
-```
-
-- [ ] **Step 2: Run it to make sure it fails**
-
-Run: `cd backend && node --test test/migrate.test.js`
-Expected: FAIL — `Cannot find module '../lib/migrate.js'`
-
-- [ ] **Step 3: Write the implementation**
-
-Create `backend/lib/migrate.js`:
-
-```js
-import fs from "node:fs/promises";
-import path from "node:path";
-import { userKey, userDir } from "./paths.js";
-
-async function exists(p) {
-  try { await fs.stat(p); return true; } catch (e) { return false; }
-}
-
-// One-time move of the pre-multi-tenancy layout into the owner's cabinet.
-// Returns true only when it actually moved something, so a restart is a no-op.
-export async function migrateLegacy(dataDir, ownerEmail) {
-  if (!ownerEmail) return false;
-
-  const legacyCollection = path.join(dataDir, "collection.json");
-  if (!(await exists(legacyCollection))) return false;
-
-  const owner = userDir(dataDir, userKey(ownerEmail));
-  // Never clobber a live cabinet. If both exist, the current one is the truth
-  // and the legacy file is left alone for a human to look at.
-  if (await exists(path.join(owner, "collection.json"))) return false;
-
-  await fs.mkdir(owner, { recursive: true });
-  await fs.rename(legacyCollection, path.join(owner, "collection.json"));
-
-  const legacyPhotos = path.join(dataDir, "photos");
-  if (await exists(legacyPhotos)) {
-    await fs.rename(legacyPhotos, path.join(owner, "photos"));
-  }
-
-  return true;
-}
-```
-
-- [ ] **Step 4: Run the tests and make sure they pass**
-
-Run: `cd backend && node --test test/migrate.test.js`
-Expected: PASS, 5 tests.
-
-- [ ] **Step 5: Call it at startup**
-
-In `backend/server.js`, import it and extend `ensureStore`:
-
-```js
-import { migrateLegacy } from "./lib/migrate.js";
-
-export async function ensureStore() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const moved = await migrateLegacy(DATA_DIR, process.env.OWNER_EMAIL || "");
-  if (moved) console.log("Migrated the legacy collection into the owner's cabinet.");
-}
-```
-
-- [ ] **Step 6: Verify the whole suite**
-
-Run: `cd backend && npm test`
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add backend/lib/migrate.js backend/test/migrate.test.js backend/server.js
-git commit -m "Move any pre-existing collection into the owner's cabinet
-
-Runs once at startup and refuses to overwrite a cabinet that already has
-data, so an unexpected restart cannot replace live data with stale."
-```
+`ensureStore()` now only creates the data directory, and carries a comment
+recording why it does nothing else.
 
 ---
 
