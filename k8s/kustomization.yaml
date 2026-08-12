@@ -25,6 +25,6 @@ resources:
 # rollback a plain `git revert`.
 images:
   - name: ghcr.io/yanbin-pan/tea-cabinet-backend
-    newTag: a7e545387e551176fb55b3b141cacac376da0a8e
+    newTag: abb203ba0f3cc209bcaad13377153e785af19853
   - name: ghcr.io/yanbin-pan/tea-cabinet-frontend
-    newTag: a7e545387e551176fb55b3b141cacac376da0a8e
+    newTag: abb203ba0f3cc209bcaad13377153e785af19853
