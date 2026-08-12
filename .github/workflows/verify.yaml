@@ -141,3 +141,53 @@ jobs:
                         ! -name '.sops.yaml' ! -name '.sops.yml' -print)
 
           [ "$found" = "1" ] || echo "No .sops.yaml files to check."
+
+  # The gap this closes: every other job runs code from the source tree, so a
+  # file that exists in git but is never COPYed into the image passes all of
+  # them and then CrashLoopBackOffs in the cluster. That happened — `lib/` was
+  # added without updating the Dockerfile, and 34 green tests said nothing.
+  #
+  # Built for the runner's own architecture, not arm64. A missing file is
+  # architecture-independent, and a native build needs no emulation, so this
+  # stays fast enough to run on every pull request.
+  image:
+    name: Images boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the backend image
+        run: docker build -t tea-backend:ci ./backend
+
+      - name: Boot it and require a healthy response
+        run: |
+          set -euo pipefail
+          docker run -d --name tea-ci -p 8080:8080 tea-backend:ci
+
+          for i in $(seq 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health > /tmp/health.json 2>/dev/null; then
+              echo "Healthy after ${i}s: $(cat /tmp/health.json)"
+              exit 0
+            fi
+            # A crash-looping container will never answer, so surface why.
+            if [ "$(docker inspect -f '{{.State.Running}}' tea-ci)" != "true" ]; then
+              echo "::error::The backend container exited instead of serving."
+              docker logs tea-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::The backend image never answered /api/health."
+          docker logs tea-ci
+          exit 1
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f tea-ci 2>/dev/null || true
+
+      - name: Build the frontend image
+        run: docker build -t tea-frontend:ci ./frontend
+
+      - name: Require nginx to accept its own config
+        run: docker run --rm tea-frontend:ci nginx -t
