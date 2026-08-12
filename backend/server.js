@@ -58,8 +58,9 @@ app.put("/api/collection", async (req, res) => {
     res.status(400).json({ error: "Expected { teas: [...] } or an array." });
     return;
   }
-  const dir = cabinetOf(req);
+  let dir;
   try {
+    dir = cabinetOf(req);
     await writeCollection(dir, teas, { email: req.userEmail });
   } catch (e) {
     res.status(500).json({ error: "Could not save the collection." });
