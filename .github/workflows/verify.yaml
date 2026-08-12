@@ -84,6 +84,20 @@ jobs:
           grep -q 'requestHeaderName: Cf-Connecting-Ip' /tmp/rendered.yaml \
             || fail "The rate limiter must key on Cf-Connecting-Ip, not the source IP."
 
+          # Photos get their own router and a far looser limit. Losing this
+          # chain silently reinstates the tight limit on photo traffic, which
+          # broke imports and blanked thumbnails once already.
+          grep -q 'router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The photo ingress must chain the photo rate limit and basic auth."
+
+          grep -q 'path: /api/photos' /tmp/rendered.yaml \
+            || fail "The /api/photos route is missing."
+
+          # Every route stays behind basic auth. Two ingresses now, so count
+          # them: a photo route that lost its auth would be a silent hole.
+          [ "$(grep -c 'tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml)" = "2" ] \
+            || fail "Expected both ingresses to require basic auth."
+
           # Two replicas each, as designed. Catches an accidental scale-down.
           [ "$(grep -c '^  replicas: 2$' /tmp/rendered.yaml)" = "2" ] \
             || fail "Expected exactly two Deployments at replicas: 2."

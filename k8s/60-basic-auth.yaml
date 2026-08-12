@@ -28,6 +28,29 @@ spec:
       # Cloudflare, which overwrites Cf-Connecting-Ip on every request.
       requestHeaderName: Cf-Connecting-Ip
 ---
+# The same limiter, sized for photo traffic instead of page traffic.
+#
+# One gallery load fetches one image per tea, and one import uploads one image
+# per tea, so this scales with collection size where the limit above scales with
+# page views. 1200/minute with a burst of 600 clears a 500-tea gallery in a
+# single burst and still sustains 20/second afterwards.
+#
+# Kept as a limit rather than removed entirely so a runaway client still cannot
+# saturate the tunnel — but set high enough that ordinary use can never reach
+# it, because a limit real usage can hit produces exactly the kind of silent,
+# intermittent failure this replaced.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tea-photo-rate-limit
+spec:
+  rateLimit:
+    average: 1200
+    period: 1m
+    burst: 600
+    sourceCriterion:
+      requestHeaderName: Cf-Connecting-Ip
+---
 # The password gate. Traefik challenges before any request reaches the frontend
 # or the API, so an unauthenticated visitor gets a 401 and never touches the app.
 #

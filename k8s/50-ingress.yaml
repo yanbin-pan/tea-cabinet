@@ -4,14 +4,14 @@
 # `/api` is routed straight to the backend, bypassing nginx, so the API path has
 # one less hop. Everything else goes to the frontend, which serves the SPA.
 #
-# The middleware annotation names each Middleware as <namespace>-<name>@kubernetescrd
-# and applies to BOTH routers this Ingress creates — the SPA and the API are
-# equally gated. Order is significant and rate limiting comes first, so a flood
-# of guesses is throttled before any of them costs a bcrypt verification.
+# TWO Ingress objects, deliberately. The middleware annotation is per-Ingress,
+# not per-path, so routes that need different middleware chains cannot share
+# one object. Traefik merges them and prefers the longer path, so `/api/photos`
+# wins over `/api` for photo traffic.
 #
 # Getting a middleware name wrong fails to a 404 rather than an unauthenticated
 # 200 — a loud failure rather than a silent hole. The `manifests` job in CI
-# asserts both names survive any edit to this file.
+# asserts these names survive any edit to this file.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -39,3 +39,38 @@ spec:
                 name: frontend
                 port:
                   number: 80
+---
+# Photos get their own router, and their own far looser limit.
+#
+# This exists because of a real failure. The tight limit was sized when every
+# photo was inlined into the collection document, so a page load was ONE
+# request. Moving photos to individual files multiplied that by the number of
+# teas: importing 45 teas made 45 uploads and then a save, and the save was the
+# request that got rejected — the collection was never stored, and the data
+# vanished on the next refresh. Loading the gallery failed the same way, which
+# is why some thumbnails were blank while opening a single tea always worked.
+#
+# Photo bytes are immutable, addressed by a random 128-bit id, and cached for a
+# year, so throttling them protects nothing that matters. Guessing an id is not
+# a realistic attack, and the collection API and SPA — where abuse would
+# actually cost something — keep the tight limit above.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tea-cabinet-photos
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: tea.minipi.net
+      http:
+        paths:
+          - path: /api/photos
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8080
