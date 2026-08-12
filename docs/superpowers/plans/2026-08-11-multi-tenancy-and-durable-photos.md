@@ -1389,15 +1389,15 @@ test("a correctly signed token yields the email, lowercased", async () => {
 });
 
 test("a token from a different issuer is rejected", async () => {
-  await assert.rejects(() => verify(await token({}, { issuer: "https://evil.cloudflareaccess.com" })));
+  await assert.rejects(async () => verify(await token({}, { issuer: "https://evil.cloudflareaccess.com" })));
 });
 
 test("a token for a different audience is rejected", async () => {
-  await assert.rejects(() => verify(await token({}, { audience: "someone-elses-app" })));
+  await assert.rejects(async () => verify(await token({}, { audience: "someone-elses-app" })));
 });
 
 test("an expired token is rejected", async () => {
-  await assert.rejects(() => verify(await token({}, { expiry: "-1m" })));
+  await assert.rejects(async () => verify(await token({}, { expiry: "-1m" })));
 });
 
 test("a token signed by an unknown key is rejected", async () => {
