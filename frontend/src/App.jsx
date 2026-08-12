@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Search, Plus, X, Leaf, Pencil, Trash2, Save, MapPin, Calendar, Droplet, Award, Camera, Upload, Loader2, AlertCircle, Check, Download, FileUp, Zap, Layers } from "lucide-react";
+import { ApiError, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId, dataUrlToBlob } from "./api.js";
 
 const TEA_TYPES = ["Green", "White", "Yellow", "Oolong", "Black", "Dark", "Pu-erh", "Scented", "Herbal", "Other"];
 
@@ -18,48 +19,18 @@ const TYPE_COLORS = {
 
 const GRADES = ["Everyday", "Standard", "Premium", "Competition", "Imperial / Gong Ting"];
 const RARITY = ["Common", "Uncommon", "Rare", "Very rare"];
-const STORAGE_KEY = "cha:collection:v2";
 
 const BLANK = { id: null, englishName: "", chineseName: "", type: "", flavourNotes: "", brewTemp: "", steepTime: "", origin: "", harvestYear: "", rarity: "", grade: "", caffeine: "", reasoning: "", photo: null, createdAt: null };
-
-const SEED = [];
 
 // Same-origin in production (nginx proxies /api to the backend); override for
 // split deployments with VITE_API_BASE at build time.
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
-async function persist(collection) {
-  const json = JSON.stringify(collection);
-  // Synchronous mirror first: this write completes immediately, so it survives
-  // even if the page is refreshed before the network write below finishes.
-  try { if (window.localStorage) window.localStorage.setItem(STORAGE_KEY, json); } catch (e) {}
-  // Durable store: the backend's JSON file on its mounted volume.
-  try {
-    await fetch(`${API_BASE}/api/collection`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teas: collection }),
-    });
-  } catch (e) {}
-}
-async function hydrate() {
-  // Prefer the backend; fall back to the local mirror only when it's unreachable
-  // (covers an offline reload — the mirror is never authoritative otherwise).
-  try {
-    const res = await fetch(`${API_BASE}/api/collection`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.teas)) return data.teas;
-    }
-  } catch (e) {
-    try {
-      if (window.localStorage) {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (raw) return JSON.parse(raw);
-      }
-    } catch (e2) {}
-  }
-  return null;
+// A record's photo is an id after this change and a data URL in older exports,
+// so both must render while any un-migrated data exists.
+export function srcFor(photo) {
+  if (!photo) return null;
+  return isPhotoId(photo) ? photoUrl(photo) : photo;
 }
 
 // Monotonic unique id — timestamp + counter + randomness, so IDs minted in the
@@ -75,42 +46,70 @@ export default function App() {
   const [editing, setEditing] = useState(null);
   const [detail, setDetail] = useState(null);
   const [toast, setToast] = useState(null);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      let data = await hydrate();
-      if (!Array.isArray(data)) { data = SEED; }
-      // Backfill any fields added in later versions (e.g. caffeine) so older
-      // records don't carry undefined values into the edit form.
-      data = data.map((t) => ({ ...BLANK, ...t }));
-      if (alive) { setCollection(data); setReady(true); }
-    })();
-    return () => { alive = false; };
-  }, []);
+  const [saveState, setSaveState] = useState("idle");
+  const [loadError, setLoadError] = useState(null);
 
   const showToast = useCallback((msg, kind = "ok") => {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 2600);
   }, []);
 
-  const save = useCallback((draft) => {
-    setCollection((prev) => {
-      let next;
-      if (draft.id && prev.some((t) => t.id === draft.id)) next = prev.map((t) => (t.id === draft.id ? draft : t));
-      else { const rec = { ...draft, id: draft.id || uniqueId(), createdAt: draft.createdAt || Date.now() }; next = [rec, ...prev]; }
-      persist(next);
-      return next;
-    });
-    setEditing(null);
-    showToast(draft.id ? "Tea updated" : "Tea added to your collection");
+  // The one place a collection is written. Side effects must not live inside a
+  // setState updater: React double-invokes updaters under StrictMode, which was
+  // firing two PUTs per save.
+  const commit = useCallback(async (next) => {
+    setSaveState("saving");
+    try {
+      await saveCollection(next);
+      setSaveState("saved");
+      return true;
+    } catch (err) {
+      setSaveState("error");
+      showToast(err instanceof ApiError ? err.message : "Could not save your change.", "err");
+      return false;
+    }
   }, [showToast]);
 
-  const remove = useCallback((id) => {
-    setCollection((prev) => { const next = prev.filter((t) => t.id !== id); persist(next); return next; });
-    setDetail(null);
-    showToast("Removed from collection");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { teas, source } = await loadCollection();
+        if (!alive) return;
+        // Backfill any fields added in later versions (e.g. caffeine) so older
+        // records don't carry undefined values into the edit form.
+        setCollection(teas.map((t) => ({ ...BLANK, ...t })));
+        // "Unreachable" and "empty" are different facts and must not look alike.
+        if (source === "cache") showToast("Offline — showing your last saved copy", "err");
+        if (source === "unavailable") setLoadError("Could not reach the server.");
+      } catch (err) {
+        if (!alive) return;
+        setLoadError(err instanceof ApiError ? err.message : "Could not load your collection.");
+      } finally {
+        if (alive) setReady(true);
+      }
+    })();
+    return () => { alive = false; };
   }, [showToast]);
+
+  const save = useCallback(async (draft) => {
+    const isUpdate = Boolean(draft.id) && collection.some((t) => t.id === draft.id);
+    const next = isUpdate
+      ? collection.map((t) => (t.id === draft.id ? draft : t))
+      : [{ ...draft, id: draft.id || uniqueId(), createdAt: draft.createdAt || Date.now() }, ...collection];
+
+    setCollection(next);
+    setEditing(null);
+    // Success is claimed only once the server has confirmed the write.
+    if (await commit(next)) showToast(isUpdate ? "Tea updated" : "Tea added to your collection");
+  }, [collection, commit, showToast]);
+
+  const remove = useCallback(async (id) => {
+    const next = collection.filter((t) => t.id !== id);
+    setCollection(next);
+    setDetail(null);
+    if (await commit(next)) showToast("Removed from collection");
+  }, [collection, commit, showToast]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -148,58 +147,82 @@ export default function App() {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const incoming = Array.isArray(data) ? data : data.teas;
-      if (!Array.isArray(incoming)) throw new Error("bad shape");
-      setCollection((prev) => {
-        const byId = new Map(prev.map((t) => [t.id, t]));
-        let updated = 0, addedNew = 0;
-        for (const raw of incoming) {
-          if (!raw || (!raw.englishName && !raw.chineseName)) continue;
-          const rec = { ...BLANK, ...raw };
-          if (rec.id && byId.has(rec.id)) {
-            // Same ID as an existing tea: update it in place (merge over old).
-            rec.createdAt = rec.createdAt || byId.get(rec.id).createdAt || Date.now();
-            byId.set(rec.id, rec); updated++;
-          } else {
-            // New tea (or missing id): give it a guaranteed-unique id.
-            if (!rec.id) rec.id = uniqueId();
-            if (!rec.createdAt) rec.createdAt = Date.now();
-            byId.set(rec.id, rec); addedNew++;
-          }
-        }
-        const next = Array.from(byId.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        persist(next);
-        const parts = [];
-        if (addedNew) parts.push(`${addedNew} added`);
-        if (updated) parts.push(`${updated} updated`);
-        showToast(`Import complete — ${parts.length ? parts.join(", ") : "no teas found"}`);
-        return next;
-      });
-    } catch (err) { showToast("Couldn't read that file — expected a Tea Cabinet export", "err"); }
-  }, [showToast]);
 
-  const dedupe = useCallback(() => {
-    setCollection((prev) => {
-      const seen = new Map();
-      // Collapse duplicates: same id first, otherwise same english+chinese name.
-      for (const t of prev) {
-        const key = t.id || `${(t.englishName || "").trim().toLowerCase()}|${(t.chineseName || "").trim().toLowerCase()}`;
-        const existing = seen.get(key);
-        // Keep the richer record (prefer one that has a caffeine value / more fields).
-        if (!existing) { seen.set(key, t); continue; }
-        const score = (x) => Object.values(x).filter((v) => v !== "" && v != null).length;
-        seen.set(key, score(t) >= score(existing) ? t : existing);
+    let incoming;
+    try {
+      const data = JSON.parse(await file.text());
+      incoming = Array.isArray(data) ? data : data.teas;
+      if (!Array.isArray(incoming)) throw new Error("bad shape");
+    } catch (err) {
+      showToast("Couldn't read that file — expected a Tea Cabinet export", "err");
+      return;
+    }
+
+    setSaveState("saving");
+    const byId = new Map(collection.map((t) => [t.id, t]));
+    let added = 0, updated = 0, failedPhotos = 0;
+
+    for (const raw of incoming) {
+      if (!raw || (!raw.englishName && !raw.chineseName)) continue;
+      const rec = { ...BLANK, ...raw };
+
+      // An older export carries the photo inline. Upload it as its own small
+      // request, so a large import is many small writes and never one huge one.
+      if (rec.photo && !isPhotoId(rec.photo)) {
+        try {
+          rec.photo = await uploadPhoto(await dataUrlToBlob(rec.photo));
+        } catch (err) {
+          rec.photo = null;
+          failedPhotos++;
+        }
       }
-      const next = Array.from(seen.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      const removed = prev.length - next.length;
-      persist(next);
+
+      if (rec.id && byId.has(rec.id)) {
+        // Same ID as an existing tea: update it in place (merge over old).
+        rec.createdAt = rec.createdAt || byId.get(rec.id).createdAt || Date.now();
+        byId.set(rec.id, rec);
+        updated++;
+      } else {
+        // New tea (or missing id): give it a guaranteed-unique id.
+        if (!rec.id) rec.id = uniqueId();
+        if (!rec.createdAt) rec.createdAt = Date.now();
+        byId.set(rec.id, rec);
+        added++;
+      }
+    }
+
+    const next = Array.from(byId.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    setCollection(next);
+
+    // Success is claimed only once the server has confirmed the write.
+    if (await commit(next)) {
+      const parts = [];
+      if (added) parts.push(`${added} added`);
+      if (updated) parts.push(`${updated} updated`);
+      if (failedPhotos) parts.push(`${failedPhotos} photo${failedPhotos === 1 ? "" : "s"} skipped`);
+      showToast(`Import complete — ${parts.length ? parts.join(", ") : "no teas found"}`);
+    }
+  }, [collection, commit, showToast]);
+
+  const dedupe = useCallback(async () => {
+    const seen = new Map();
+    // Collapse duplicates: same id first, otherwise same english+chinese name.
+    for (const t of collection) {
+      const key = t.id || `${(t.englishName || "").trim().toLowerCase()}|${(t.chineseName || "").trim().toLowerCase()}`;
+      const existing = seen.get(key);
+      // Keep the richer record (prefer one that has a caffeine value / more fields).
+      if (!existing) { seen.set(key, t); continue; }
+      const score = (x) => Object.values(x).filter((v) => v !== "" && v != null).length;
+      seen.set(key, score(t) >= score(existing) ? t : existing);
+    }
+    const next = Array.from(seen.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const removed = collection.length - next.length;
+
+    setCollection(next);
+    if (await commit(next)) {
       showToast(removed > 0 ? `Removed ${removed} duplicate ${removed === 1 ? "tea" : "teas"}` : "No duplicates found");
-      return next;
-    });
-  }, [showToast]);
+    }
+  }, [collection, commit, showToast]);
 
   return (
     <div style={S.root}>
@@ -212,7 +235,10 @@ export default function App() {
             <p style={S.sub}>A personal inventory of Chinese tea · {collection.length} {collection.length === 1 ? "entry" : "entries"}</p>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> Saving…</span>}
+          {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> Saved</span>}
+          {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> Not saved</span>}
           <label className="btn" style={{ cursor: "pointer" }}>
             <FileUp size={15} /> Import
             <input type="file" accept="application/json,.json" onChange={importJson} style={{ display: "none" }} />
@@ -243,6 +269,15 @@ export default function App() {
 
       {!ready ? (
         <div style={S.empty}><Loader2 className="spin" size={22} /><span style={{ marginTop: 10 }}>Opening the cabinet…</span></div>
+      ) : loadError ? (
+        // A server we could not reach must never be drawn as an empty cabinet:
+        // that is the reading that made a data loss look like a normal state.
+        <div style={S.empty}>
+          <AlertCircle size={26} color="#B3261E" />
+          <p style={{ ...S.emptyTitle, marginTop: 12 }}>{loadError}</p>
+          <p style={S.emptySub}>Your teas are not lost — they are on the server. Reload once it is reachable again.</p>
+          <button className="btn" onClick={() => window.location.reload()}>Try again</button>
+        </div>
       ) : filtered.length === 0 ? (
         <EmptyState hasAny={collection.length > 0} onAdd={() => setEditing({ ...BLANK })} onClear={() => { setQuery(""); setTypeFilter("All"); }} />
       ) : (
@@ -261,7 +296,7 @@ function TeaCard({ tea, onOpen }) {
   return (
     <button className="tea-card" style={S.card} onClick={onOpen}>
       <div style={{ ...S.cardTop, background: c.bg }}>
-        {tea.photo ? <img src={tea.photo} alt="" style={S.cardImg} /> : <span style={{ ...S.cardHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || <Leaf size={30} color={c.dot} />}</span>}
+        {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.cardImg} /> : <span style={{ ...S.cardHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || <Leaf size={30} color={c.dot} />}</span>}
         <span style={{ ...S.typeTag, background: c.dot }}>{tea.type || "—"}</span>
         {tea.grade && <span style={S.gradeTag}>{tea.grade}</span>}
       </div>
@@ -298,7 +333,15 @@ function EditModal({ draft, onClose, onSave, onToast }) {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
   const [scanned, setScanned] = useState(false);
+  // The bytes of the photo just picked, kept only for this modal's preview and
+  // for the scan call. What the record stores is the id the server hands back.
+  const [preview, setPreview] = useState(null);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Scanning needs the image bytes. A freshly picked photo has them in
+  // `preview`; an older un-migrated record still carries an inline data URL.
+  // A record that holds only a photo id has nothing local to re-read.
+  const scanSrc = preview || (form.photo && !isPhotoId(form.photo) ? form.photo : null);
 
   const onFile = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -312,10 +355,23 @@ function EditModal({ draft, onClose, onSave, onToast }) {
       const raw = await fileToDataUrl(file);
       // Re-encode to a clean, size-bounded JPEG before storing or scanning.
       const dataUrl = await normalizeImage(raw);
-      set("photo", dataUrl);
+      setPreview(dataUrl);
+      // The photo goes up as its own request and the record keeps only its id,
+      // so the collection write stays small no matter how many teas have photos.
+      try {
+        const blob = await dataUrlToBlob(dataUrl);
+        const id = await uploadPhoto(blob);
+        set("photo", id);
+      } catch (err) {
+        // Drop the preview too: showing a photo the record is not going to keep
+        // is the same class of lie this whole change exists to remove.
+        setPreview(null);
+        setScanError(err instanceof ApiError ? err.message : "Could not upload that photo.");
+        return;
+      }
       await runScan(dataUrl);
     } catch (err) { setScanError((err && err.message) || "Couldn't read that file. Try another photo."); }
-    e.target.value = "";
+    finally { e.target.value = ""; }
   };
 
   const runScan = async (dataUrl) => {
@@ -356,7 +412,7 @@ function EditModal({ draft, onClose, onSave, onToast }) {
         </div>
         <div style={S.modalScroll}>
           <div style={{ ...S.intake, background: c.bg }}>
-            {form.photo ? <img src={form.photo} alt="Tea packet" style={S.intakeImg} /> : <div style={S.intakeIcon}><Camera size={26} color={c.dot} /></div>}
+            {preview || form.photo ? <img src={preview || srcFor(form.photo)} alt="Tea packet" style={S.intakeImg} /> : <div style={S.intakeIcon}><Camera size={26} color={c.dot} /></div>}
             <div style={{ flex: 1 }}>
               <p style={S.intakeTitle}>Read the label</p>
               <p style={S.intakeSub}>Upload a photo of the packet and Claude will translate the Chinese and fill in the fields for you to review.</p>
@@ -365,7 +421,7 @@ function EditModal({ draft, onClose, onSave, onToast }) {
                   <Upload size={14} /> {form.photo ? "Replace photo" : "Upload photo"}
                   <input type="file" accept="image/*" onChange={onFile} style={{ display: "none" }} />
                 </label>
-                {form.photo && !scanning && <button className="btn btn-small" onClick={() => runScan(form.photo)}><Camera size={14} /> Re-read</button>}
+                {scanSrc && !scanning && <button className="btn btn-small" onClick={() => runScan(scanSrc)}><Camera size={14} /> Re-read</button>}
               </div>
             </div>
           </div>
@@ -406,7 +462,7 @@ function DetailModal({ tea, onClose, onEdit, onDelete }) {
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={{ ...S.detailHero, background: c.bg }}>
           <button className="icon-btn" style={S.detailClose} onClick={onClose} aria-label="Close"><X size={18} /></button>
-          {tea.photo ? <img src={tea.photo} alt="" style={S.detailImg} /> : <span style={{ ...S.detailHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || (tea.englishName && tea.englishName[0]) || "茶"}</span>}
+          {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.detailImg} /> : <span style={{ ...S.detailHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || (tea.englishName && tea.englishName[0]) || "茶"}</span>}
         </div>
         <div style={S.modalScroll}>
           <div style={S.detailNames}>
@@ -667,6 +723,7 @@ const S = {
   markHanzi: { fontFamily: "'Noto Serif SC', serif", color: PAPER, fontSize: 30, lineHeight: 1, marginTop: 2 },
   h1: { fontFamily: "'Noto Serif SC', 'Inter', serif", fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
   sub: { margin: "3px 0 0", fontSize: 14, color: "#8C8574" },
+  saveHint: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6B6152" },
   controls: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", margin: "22px 0 26px" },
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #E4DECF", borderRadius: 11, padding: "0 12px", height: 42, flex: "1 1 260px", minWidth: 220 },
   search: { border: "none", outline: "none", background: "transparent", fontSize: 14.5, flex: 1, color: INK, fontFamily: "inherit" },
