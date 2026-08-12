@@ -156,38 +156,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the backend image
-        run: docker build -t tea-backend:ci ./backend
+      - name: Build both images
+        run: |
+          docker build -t tea-backend:ci ./backend
+          docker build -t tea-frontend:ci ./frontend
 
-      - name: Boot it and require a healthy response
+      # Both together on one network, because that is the only way this pair is
+      # ever run. nginx resolves `proxy_pass http://backend:8080` once at config
+      # load and refuses to start if the name does not resolve, so `nginx -t` on
+      # a lone frontend container can never pass — and the container name below
+      # must stay `backend` for the same reason.
+      - name: Boot the pair and exercise both paths
         run: |
           set -euo pipefail
-          docker run -d --name tea-ci -p 8080:8080 tea-backend:ci
+          docker network create tea-ci-net
+          docker run -d --name backend --network tea-ci-net tea-backend:ci
+          docker run -d --name frontend --network tea-ci-net -p 8081:80 tea-frontend:ci
 
+          fail() {
+            echo "::error::$1"
+            echo "--- backend ---";  docker logs backend  2>&1 | tail -30
+            echo "--- frontend ---"; docker logs frontend 2>&1 | tail -30
+            exit 1
+          }
+
+          ready=0
           for i in $(seq 30); do
-            if curl -fsS http://127.0.0.1:8080/api/health > /tmp/health.json 2>/dev/null; then
-              echo "Healthy after ${i}s: $(cat /tmp/health.json)"
-              exit 0
-            fi
-            # A crash-looping container will never answer, so surface why.
-            if [ "$(docker inspect -f '{{.State.Running}}' tea-ci)" != "true" ]; then
-              echo "::error::The backend container exited instead of serving."
-              docker logs tea-ci
-              exit 1
-            fi
+            # A crash-looping container never answers, so say so rather than
+            # waiting out the whole timeout.
+            for c in backend frontend; do
+              [ "$(docker inspect -f '{{.State.Running}}' $c)" = "true" ] \
+                || fail "Container '$c' exited instead of serving."
+            done
+            if curl -fsS http://127.0.0.1:8081/ > /dev/null 2>&1; then ready=1; break; fi
             sleep 1
           done
+          [ "$ready" = "1" ] || fail "The frontend never served the app."
 
-          echo "::error::The backend image never answered /api/health."
-          docker logs tea-ci
-          exit 1
+          # Through nginx to the backend: proves the two images compose, not
+          # merely that each starts.
+          curl -fsS http://127.0.0.1:8081/api/health | tee /tmp/health.json
+          grep -q '"ok":true' /tmp/health.json || fail "/api/health did not report ok through nginx."
 
-      - name: Stop the container
+          echo "Both images boot and the proxy path works."
+
+      - name: Tear down
         if: always()
-        run: docker rm -f tea-ci 2>/dev/null || true
-
-      - name: Build the frontend image
-        run: docker build -t tea-frontend:ci ./frontend
-
-      - name: Require nginx to accept its own config
-        run: docker run --rm tea-frontend:ci nginx -t
+        run: |
+          docker rm -f backend frontend 2>/dev/null || true
+          docker network rm tea-ci-net 2>/dev/null || true
