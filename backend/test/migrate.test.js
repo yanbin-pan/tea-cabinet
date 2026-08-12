@@ -53,6 +53,36 @@ test("does nothing without an owner address", async () => {
   assert.equal(await migrateLegacy(dir, ""), false);
 });
 
+test("never clobbers a destination populated between the check and the move", async () => {
+  const dir = await legacyDir();
+  const owner = userDir(dir, userKey("owner@example.com"));
+  await fs.mkdir(owner, { recursive: true });
+  await fs.writeFile(path.join(owner, "collection.json"), JSON.stringify({ teas: [{ id: "freshly-written" }] }), "utf8");
+
+  assert.equal(await migrateLegacy(dir, "owner@example.com"), false);
+
+  const kept = JSON.parse(await fs.readFile(path.join(owner, "collection.json"), "utf8"));
+  assert.equal(kept.teas[0].id, "freshly-written", "the owner's real data survives untouched");
+});
+
+test("resumes after a crash that left photos moved but collection.json not yet moved", async () => {
+  const dir = await legacyDir();
+  const owner = userDir(dir, userKey("owner@example.com"));
+  await fs.mkdir(owner, { recursive: true });
+
+  // Simulate a prior run that crashed after moving photos but before moving
+  // collection.json: photos are already in the owner's cabinet, and the
+  // legacy collection.json is still sitting at the top level.
+  await fs.rename(path.join(dir, "photos"), path.join(owner, "photos"));
+
+  assert.equal(await migrateLegacy(dir, "owner@example.com"), true);
+
+  const moved = JSON.parse(await fs.readFile(path.join(owner, "collection.json"), "utf8"));
+  assert.equal(moved.teas[0].id, "old");
+  assert.ok(await fs.stat(path.join(owner, "photos", `${"a".repeat(32)}.jpg`)));
+  await assert.rejects(() => fs.stat(path.join(dir, "collection.json")), "the legacy collection is moved, not left behind");
+});
+
 // Not in the brief's test list, but the two-replica scenario is a specific
 // hazard called out for this task: two processes may call migrateLegacy at
 // the same instant against the same shared directory. This drives two
