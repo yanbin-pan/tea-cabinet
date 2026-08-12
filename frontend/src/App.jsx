@@ -48,6 +48,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [saveState, setSaveState] = useState("idle");
   const [loadError, setLoadError] = useState(null);
+  const [email, setEmail] = useState(null);
 
   const showToast = useCallback((msg, kind = "ok") => {
     setToast({ msg, kind });
@@ -65,7 +66,11 @@ export default function App() {
       return true;
     } catch (err) {
       setSaveState("error");
-      showToast(err instanceof ApiError ? err.message : "Could not save your change.", "err");
+      const authExpired = err instanceof ApiError && err.kind === "auth";
+      showToast(
+        authExpired ? "Your session expired — reload the page to sign in again." : (err.message || "Could not save your change."),
+        "err"
+      );
       return false;
     }
   }, [showToast]);
@@ -74,8 +79,9 @@ export default function App() {
     let alive = true;
     (async () => {
       try {
-        const { teas, source } = await loadCollection();
+        const { teas, source, email } = await loadCollection();
         if (!alive) return;
+        setEmail(email);
         // Backfill any fields added in later versions (e.g. caffeine) so older
         // records don't carry undefined values into the edit form.
         setCollection(teas.map((t) => ({ ...BLANK, ...t })));
@@ -236,6 +242,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {email && <span style={S.whoami}>{email}</span>}
           {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> Saving…</span>}
           {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> Saved</span>}
           {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> Not saved</span>}
@@ -724,6 +731,7 @@ const S = {
   h1: { fontFamily: "'Noto Serif SC', 'Inter', serif", fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
   sub: { margin: "3px 0 0", fontSize: 14, color: "#8C8574" },
   saveHint: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6B6152" },
+  whoami: { fontSize: 12, color: "#6B6152", marginLeft: "auto" },
   controls: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", margin: "22px 0 26px" },
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #E4DECF", borderRadius: 11, padding: "0 12px", height: 42, flex: "1 1 260px", minWidth: 220 },
   search: { border: "none", outline: "none", background: "transparent", fontSize: 14.5, flex: 1, color: INK, fontFamily: "inherit" },

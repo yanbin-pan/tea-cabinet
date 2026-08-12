@@ -88,7 +88,7 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
     res = await fetchImpl(`${API_BASE}/api/collection`);
   } catch (e) {
     const cached = readMirror();
-    return { teas: cached || [], source: cached ? "cache" : "unavailable" };
+    return { teas: cached || [], source: cached ? "cache" : "unavailable", email: null };
   }
   if (res.status === 401) {
     throw new ApiError(explain(401), { status: 401, kind: "auth" });
@@ -99,7 +99,7 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
   const data = await parseJson(res);
   const teas = Array.isArray(data && data.teas) ? data.teas : [];
   mirror(teas);
-  return { teas, source: "server" };
+  return { teas, source: "server", email: typeof data.email === "string" ? data.email : null };
 }
 
 export async function uploadPhoto(blob, { fetchImpl = fetch } = {}) {

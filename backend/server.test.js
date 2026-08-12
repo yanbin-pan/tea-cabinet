@@ -94,7 +94,7 @@ test("GET /api/collection is empty initially; PUT then GET reflects the new list
 
   let res = await as(EMAIL, "/api/collection");
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { teas: [] });
+  assert.deepEqual(await res.json(), { teas: [], email: EMAIL });
 
   const teas = [{ id: "t-4", englishName: "Da Hong Pao", chineseName: "大红袍", type: "Oolong" }];
   res = await as(EMAIL, "/api/collection", {
@@ -106,7 +106,7 @@ test("GET /api/collection is empty initially; PUT then GET reflects the new list
   assert.deepEqual(await res.json(), { ok: true, count: 1 });
 
   res = await as(EMAIL, "/api/collection");
-  assert.deepEqual(await res.json(), { teas });
+  assert.deepEqual(await res.json(), { teas, email: EMAIL });
 });
 
 test("PUT /api/collection accepts a bare array", async () => {

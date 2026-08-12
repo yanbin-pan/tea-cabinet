@@ -55,7 +55,7 @@ function cabinetOf(req) {
 
 app.get("/api/collection", async (req, res) => {
   try {
-    res.json({ teas: await readCollection(cabinetOf(req)) });
+    res.json({ teas: await readCollection(cabinetOf(req)), email: req.userEmail });
   } catch (e) {
     res.status(500).json({ error: "Could not read the collection." });
   }

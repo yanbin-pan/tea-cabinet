@@ -107,6 +107,17 @@ describe("loadCollection", () => {
     const fetchImpl = async () => malformedJsonResponse(200);
     await expect(loadCollection({ fetchImpl })).rejects.toBeInstanceOf(ApiError);
   });
+
+  test("returns the signed-in address when the server supplies one", async () => {
+    const fetchImpl = async () => response(200, { teas: [], email: "person@example.com" });
+    const out = await loadCollection({ fetchImpl });
+    expect(out.email).toBe("person@example.com");
+  });
+
+  test("email is null when the server does not supply one", async () => {
+    const fetchImpl = async () => response(200, { teas: [] });
+    expect((await loadCollection({ fetchImpl })).email).toBe(null);
+  });
 });
 
 describe("uploadPhoto", () => {
