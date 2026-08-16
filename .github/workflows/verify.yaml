@@ -188,7 +188,19 @@ jobs:
         run: |
           set -euo pipefail
           docker network create tea-ci-net
-          docker run -d --name backend --network tea-ci-net tea-backend:ci
+
+          # The backend refuses to start without these — deliberately, so a
+          # misconfigured deploy crash-loops rather than serving unauthenticated.
+          # That means the smoke test has to supply them. The values are
+          # throwaway: this test only exercises /api/health, which is registered
+          # before the auth middleware so the kubelet probe can reach it. No
+          # token is minted or verified here, and NODE_ENV=production keeps the
+          # ACCESS_TEST_JWKS trust-root gate shut, so nothing is loosened.
+          docker run -d --name backend --network tea-ci-net \
+            -e NODE_ENV=production \
+            -e ACCESS_TEAM_DOMAIN=ci.example.cloudflareaccess.com \
+            -e ACCESS_AUD=ci-smoke-test-not-a-real-audience \
+            tea-backend:ci
           docker run -d --name frontend --network tea-ci-net -p 8081:80 tea-frontend:ci
 
           fail() {
