@@ -70,33 +70,37 @@ jobs:
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
 
-          # The middleware chain is what stands between this app and the open
-          # internet. Assert both links, and their order: rate limiting must come
-          # first so guesses are throttled before they cost a bcrypt verification.
-          grep -q 'router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
-            || fail "The ingress middleware chain is missing, reordered, or renamed."
+          # Every referenced middleware must exist. Traefik fails a router
+          # whose middleware is missing to a 404, so a rename or a deletion
+          # takes a route offline quietly rather than loudly.
+          grep -q 'router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The collection ingress lost its rate limiter."
 
-          grep -q 'kind: Middleware' /tmp/rendered.yaml \
-            || fail "No Middleware objects were rendered."
+          grep -q 'router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd' /tmp/rendered.yaml \
+            || fail "The photo ingress lost its rate limiter."
+
+          for m in tea-rate-limit tea-photo-rate-limit; do
+            grep -q "name: $m$" /tmp/rendered.yaml \
+              || fail "Middleware $m is referenced by an ingress but not defined."
+          done
 
           # A rate limiter keyed on anything else buckets every visitor together,
           # because behind the CDN the source address is an internal pod IP.
           grep -q 'requestHeaderName: Cf-Connecting-Ip' /tmp/rendered.yaml \
             || fail "The rate limiter must key on Cf-Connecting-Ip, not the source IP."
 
-          # Photos get their own router and a far looser limit. Losing this
-          # chain silently reinstates the tight limit on photo traffic, which
-          # broke imports and blanked thumbnails once already.
-          grep -q 'router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml \
-            || fail "The photo ingress must chain the photo rate limit and basic auth."
-
           grep -q 'path: /api/photos' /tmp/rendered.yaml \
             || fail "The /api/photos route is missing."
 
-          # Every route stays behind basic auth. Two ingresses now, so count
-          # them: a photo route that lost its auth would be a silent hole.
-          [ "$(grep -c 'tea-cabinet-tea-basic-auth@kubernetescrd' /tmp/rendered.yaml)" = "2" ] \
-            || fail "Expected both ingresses to require basic auth."
+          # Basic auth is gone: identity now comes from the verified Access
+          # assertion. A surviving reference would 404 its own router.
+          [ "$(grep -c 'tea-basic-auth' /tmp/rendered.yaml)" = "0" ] \
+            || fail "A basic-auth reference survived; its router will 404."
+
+          # Without these the backend refuses to start, so a deploy that
+          # forgets them crash-loops in the cluster instead of failing here.
+          grep -q 'ACCESS_TEAM_DOMAIN' /tmp/rendered.yaml || fail "ACCESS_TEAM_DOMAIN is not set."
+          grep -q 'ACCESS_AUD' /tmp/rendered.yaml || fail "ACCESS_AUD is not set."
 
           # Two replicas each, as designed. Catches an accidental scale-down.
           [ "$(grep -c '^  replicas: 2$' /tmp/rendered.yaml)" = "2" ] \

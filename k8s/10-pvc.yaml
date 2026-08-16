@@ -10,6 +10,10 @@
 # atomic rename (see backend/server.js) rather than an in-place update. Do not
 # copy this pattern for an app with an embedded database such as SQLite, where
 # two writers over a shared mount will corrupt the file.
+# The request is documentation, not enforcement: the NFS provisioner applies no
+# quota and a pod sees the whole filesystem regardless. Raised to state the
+# intended footprint honestly now that several people store photos here. What
+# actually bounds disk use is the per-photo limit and the collection size.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -19,4 +23,4 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: 1Gi
+      storage: 5Gi

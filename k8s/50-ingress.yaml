@@ -18,7 +18,7 @@ metadata:
   name: tea-cabinet
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-rate-limit@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
@@ -60,7 +60,7 @@ metadata:
   name: tea-cabinet-photos
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd,tea-cabinet-tea-basic-auth@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: tea-cabinet-tea-photo-rate-limit@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:

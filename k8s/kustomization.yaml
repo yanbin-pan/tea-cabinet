@@ -15,8 +15,7 @@ resources:
   - 30-backend.yaml
   - 40-frontend.yaml
   - 50-ingress.yaml
-  - 60-basic-auth.yaml
-  - 70-basic-auth-secret.sops.yaml
+  - 60-rate-limits.yaml
 
 # THESE TWO TAGS ARE WRITTEN BY CI. The deploy job in .github/workflows/ci.yaml
 # rewrites both `newTag` values to the commit SHA it just built and pushes the

@@ -50,27 +50,3 @@ spec:
     burst: 600
     sourceCriterion:
       requestHeaderName: Cf-Connecting-Ip
----
-# The password gate. Traefik challenges before any request reaches the frontend
-# or the API, so an unauthenticated visitor gets a 401 and never touches the app.
-#
-# Credentials live in the `tea-basic-auth` Secret as an htpasswd line with a
-# bcrypt hash — committed encrypted with SOPS and decrypted in-cluster by Flux.
-# The plaintext password is never in this repository.
-#
-# Threat model worth keeping in mind: TLS terminates at the edge, so the password
-# is protected in transit but is visible to the CDN, and basic auth replays it on
-# every request. The rate limiter above bounds online guessing; it is not a
-# substitute for putting the hostname behind an identity proxy, which stops
-# unauthenticated traffic before it is ever forwarded.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: tea-basic-auth
-spec:
-  basicAuth:
-    secret: tea-basic-auth
-    realm: The Tea Cabinet
-    # Do not pass the Authorization header through to the app. The backend has
-    # no use for it and it should not appear in application logs.
-    removeHeader: true
