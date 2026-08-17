@@ -16,6 +16,7 @@ resources:
   - 40-frontend.yaml
   - 50-ingress.yaml
   - 60-rate-limits.yaml
+  - 80-anthropic-secret.sops.yaml
 
 # THESE TWO TAGS ARE WRITTEN BY CI. The deploy job in .github/workflows/ci.yaml
 # rewrites both `newTag` values to the commit SHA it just built and pushes the
