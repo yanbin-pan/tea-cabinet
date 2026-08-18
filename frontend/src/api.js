@@ -6,6 +6,19 @@ const API_BASE = import.meta.env?.VITE_API_BASE || "";
 const STORAGE_KEY = "cha:collection:v2";
 const PHOTO_ID = /^[0-9a-f]{32}$/;
 
+// Local-only builds have no cabinet on the server: the collection and its photos live
+// in this browser and nowhere else. Set VITE_LOCAL_ONLY=1 at build time to produce one.
+//
+// This is what a public instance is for — someone can try the app without an account,
+// and the operator stores none of their data. The one route such a build still calls
+// is /api/scan, which needs a server because it holds the API key.
+//
+// A build-time flag rather than a runtime probe, matching how VITE_API_BASE already
+// works here. It also means the mode cannot change under a running page: which store
+// is the truth is decided once, at build, instead of being inferred from whether a
+// request happened to fail.
+export const LOCAL_ONLY = /^(1|true|yes)$/i.test(String(import.meta.env?.VITE_LOCAL_ONLY || "").trim());
+
 export class ApiError extends Error {
   constructor(message, { status = 0, kind = "http" } = {}) {
     super(message);
@@ -42,13 +55,35 @@ export function photoUrl(id) {
   return `${API_BASE}/api/photos/${id}`;
 }
 
+// The single write to browser storage, and it throws. Both callers below need the
+// same bytes written; they differ only in whether a failure matters, so the decision
+// to swallow belongs at the call site rather than in here.
+function writeLocal(teas) {
+  const store = globalThis.localStorage;
+  if (!store) {
+    throw new ApiError("This browser has no storage available, so nothing can be saved here.", { kind: "storage" });
+  }
+  try {
+    store.setItem(STORAGE_KEY, JSON.stringify(teas));
+  } catch (e) {
+    // Overwhelmingly a quota error, and in a local-only build that is data loss the
+    // user must hear about. Photos are what fill the quota, so say so.
+    throw new ApiError(
+      "This browser is out of storage space. Export your collection now, then remove a few photos.",
+      { kind: "quota" }
+    );
+  }
+}
+
 function mirror(teas) {
   // Written only after the server has accepted the data. Mirroring first is what
   // made the local copy disagree with the server after a rejected save.
   try {
-    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(teas));
+    writeLocal(teas);
   } catch (e) {
     // Quota or a disabled store: the mirror is a convenience, never the truth.
+    // In a local-only build it IS the truth, which is why saveCollection calls
+    // writeLocal directly and lets this same failure through.
   }
 }
 
@@ -64,6 +99,14 @@ function readMirror() {
 }
 
 export async function saveCollection(teas, { fetchImpl = fetch } = {}) {
+  if (LOCAL_ONLY) {
+    // Throws on failure, exactly as the network path does. The rule this module
+    // exists to enforce does not get an exemption for being local: a save that did
+    // not happen must not return as though it did.
+    writeLocal(teas);
+    return { ok: true, count: teas.length };
+  }
+
   let res;
   try {
     res = await fetchImpl(`${API_BASE}/api/collection`, {
@@ -83,6 +126,13 @@ export async function saveCollection(teas, { fetchImpl = fetch } = {}) {
 }
 
 export async function loadCollection({ fetchImpl = fetch } = {}) {
+  if (LOCAL_ONLY) {
+    // "local" is its own source, distinct from "cache". Both read the same key, but
+    // "cache" means the server exists and could not be reached — a degraded state the
+    // UI warns about — while "local" is simply where the data lives.
+    return { teas: readMirror() || [], source: "local", email: null };
+  }
+
   let res;
   try {
     res = await fetchImpl(`${API_BASE}/api/collection`);
@@ -117,6 +167,13 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
 }
 
 export async function uploadPhoto(blob, { fetchImpl = fetch } = {}) {
+  if (LOCAL_ONLY) {
+    // There is no photo store to upload to. Callers keep the image inline on the
+    // record instead; this guard exists so a missed branch fails loudly here rather
+    // than posting to a route that answers 404 with an unrelated explanation.
+    throw new ApiError("This build stores photos in the browser, not on a server.", { kind: "local" });
+  }
+
   let res;
   try {
     res = await fetchImpl(`${API_BASE}/api/photos`, {

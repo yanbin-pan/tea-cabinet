@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Search, Plus, X, Leaf, Pencil, Trash2, Save, MapPin, Calendar, Droplet, Award, Camera, Upload, Loader2, AlertCircle, Check, Download, FileUp, Zap, Layers } from "lucide-react";
-import { ApiError, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId, dataUrlToBlob } from "./api.js";
+import { ApiError, LOCAL_ONLY, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId, dataUrlToBlob } from "./api.js";
 
 const TEA_TYPES = ["Green", "White", "Yellow", "Oolong", "Black", "Dark", "Pu-erh", "Scented", "Herbal", "Other"];
 
@@ -25,6 +25,19 @@ const BLANK = { id: null, englishName: "", chineseName: "", type: "", flavourNot
 // Same-origin in production (nginx proxies /api to the backend); override for
 // split deployments with VITE_API_BASE at build time.
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+// Bounds for the copy of a photo that gets STORED. The server keeps photos as their
+// own files, so a generous 1600px is free there. A local-only build keeps them inside
+// the collection in localStorage, where the whole budget is a handful of megabytes for
+// everything — a 1600px JPEG is several hundred kilobytes, which fills it after about
+// a dozen teas. 700px at 0.7 is roughly a tenth of that and still perfectly legible on
+// a card, which buys a trial collection worth of room.
+//
+// The copy that gets SCANNED is unaffected and stays at full quality in both builds:
+// the reader is working from small print on a creased packet, and downscaling to save
+// storage would be paying for space with accuracy on the one operation that costs money.
+const STORED_PHOTO_MAX_DIM = LOCAL_ONLY ? 700 : 1600;
+const STORED_PHOTO_QUALITY = LOCAL_ONLY ? 0.7 : 0.85;
 
 // A record's photo is an id after this change and a data URL in older exports,
 // so both must render while any un-migrated data exists.
@@ -174,7 +187,17 @@ export default function App() {
 
       // An older export carries the photo inline. Upload it as its own small
       // request, so a large import is many small writes and never one huge one.
-      if (rec.photo && !isPhotoId(rec.photo)) {
+      //
+      // A local-only build has nowhere to put it and keeps it inline, which is the
+      // shape it already arrived in. An import from a server build carries photo IDs
+      // instead, and those point at a cabinet this build cannot read — so they are
+      // dropped and counted, rather than left to render as permanently broken images.
+      if (LOCAL_ONLY) {
+        if (isPhotoId(rec.photo)) {
+          rec.photo = null;
+          failedPhotos++;
+        }
+      } else if (rec.photo && !isPhotoId(rec.photo)) {
         try {
           rec.photo = await uploadPhoto(await dataUrlToBlob(rec.photo));
         } catch (err) {
@@ -242,7 +265,16 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {email && <span style={S.whoami}>{email}</span>}
+          {LOCAL_ONLY ? (
+            // Said plainly and permanently, not as a toast that scrolls away. Someone
+            // who builds a collection here and then clears their browser data has lost
+            // it, and they are entitled to know that before it happens rather than after.
+            <span style={S.whoami} title="Nothing is sent to a server. Use Export to keep a copy.">
+              Stored in this browser
+            </span>
+          ) : (
+            email && <span style={S.whoami}>{email}</span>
+          )}
           {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> Saving…</span>}
           {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> Saved</span>}
           {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> Not saved</span>}
@@ -363,18 +395,25 @@ function EditModal({ draft, onClose, onSave, onToast }) {
       // Re-encode to a clean, size-bounded JPEG before storing or scanning.
       const dataUrl = await normalizeImage(raw);
       setPreview(dataUrl);
-      // The photo goes up as its own request and the record keeps only its id,
-      // so the collection write stays small no matter how many teas have photos.
-      try {
-        const blob = await dataUrlToBlob(dataUrl);
-        const id = await uploadPhoto(blob);
-        set("photo", id);
-      } catch (err) {
-        // Drop the preview too: showing a photo the record is not going to keep
-        // is the same class of lie this whole change exists to remove.
-        setPreview(null);
-        setScanError(err instanceof ApiError ? err.message : "Could not upload that photo.");
-        return;
+      if (LOCAL_ONLY) {
+        // No photo store to upload to, so the record carries the image itself — the
+        // same inline shape older exports use, which srcFor already renders. Stored
+        // at the smaller bounds, because this one goes into the localStorage budget.
+        set("photo", await normalizeImage(raw, STORED_PHOTO_MAX_DIM, STORED_PHOTO_QUALITY));
+      } else {
+        // The photo goes up as its own request and the record keeps only its id,
+        // so the collection write stays small no matter how many teas have photos.
+        try {
+          const blob = await dataUrlToBlob(dataUrl);
+          const id = await uploadPhoto(blob);
+          set("photo", id);
+        } catch (err) {
+          // Drop the preview too: showing a photo the record is not going to keep
+          // is the same class of lie this whole change exists to remove.
+          setPreview(null);
+          setScanError(err instanceof ApiError ? err.message : "Could not upload that photo.");
+          return;
+        }
       }
       await runScan(dataUrl);
     } catch (err) { setScanError((err && err.message) || "Couldn't read that file. Try another photo."); }
@@ -528,8 +567,6 @@ function Overlay({ children, onClose }) {
   return <div style={S.overlay} onClick={onClose}>{children}</div>;
 }
 
-const SCAN_SYSTEM = "You read photos of Chinese tea packaging and return a single JSON object describing the tea. Translate any Chinese on the label. Infer tea type, brewing guidance, origin, harvest year, and an approximate rarity and grade using the label plus general knowledge of Chinese tea grading. Respond with ONLY valid JSON, no prose, no markdown fences. Keys: englishName, chineseName, type, flavourNotes, brewTemp, steepTime, origin, harvestYear, rarity, grade, reasoning. Rules: type must be one of Green, White, Yellow, Oolong, Black, Dark, Pu-erh, Scented, Herbal, Other. brewTemp is a number in Celsius as a string (e.g. \"85\"). steepTime is short text (e.g. \"2–3 min\" or \"15 sec\"). rarity is one of Common, Uncommon, Rare, Very rare. grade is one of Everyday, Standard, Premium, Competition, Imperial / Gong Ting, or empty. reasoning is one or two sentences explaining the rarity and grade call. Use empty string for anything you cannot determine.";
-
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 function extractJsonObject(text) {
@@ -556,10 +593,15 @@ function extractJsonObject(text) {
 }
 
 // The Anthropic call lives on the backend (/api/scan) so the API key never
-// reaches the browser. This sends only the image bytes and the system prompt.
+// reaches the browser. This sends the image bytes and nothing else.
+//
+// The system prompt used to be sent from here. It now lives on the server
+// (backend/lib/scan.js), because a prompt the client supplies is a prompt any
+// caller can replace — which turned the endpoint into a general-purpose model
+// proxy billed to whoever owns the key.
 async function readLabelWithClaude(dataUrl) {
   const { mediaType, b64 } = parseDataUrl(dataUrl);
-  const body = JSON.stringify({ mediaType, b64, system: SCAN_SYSTEM });
+  const body = JSON.stringify({ mediaType, b64 });
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -576,8 +618,30 @@ async function readLabelWithClaude(dataUrl) {
     // 503 is the backend saying scanning is unconfigured — deterministic, so it
     // is checked before the retryable 5xx branch that would otherwise swallow it.
     if (res.status === 503) throw new Error("Label scanning isn't configured on the server. Enter the details by hand.");
-    if (res.status === 429 || res.status >= 500) { lastErr = new Error("The label reader is busy right now. Give it a moment and re-read."); continue; }
-    if (!res.ok) throw new Error("The label reader is unavailable right now. Enter the details by hand.");
+
+    // Two different 429s arrive here and only one is worth retrying. A daily quota
+    // carries a `scope` and resets at midnight, so three retries would spend two
+    // seconds arriving at the same answer while calling it a temporary hiccup.
+    // A 429 without one is the provider or the ingress asking us to slow down.
+    if (res.status === 429) {
+      const body = await res.json().catch(() => null);
+      if (body && typeof body.scope === "string") {
+        throw new Error(body.error || "You have used today's label reads. They reset at midnight UTC.");
+      }
+      lastErr = new Error("The label reader is busy right now. Give it a moment and re-read.");
+      continue;
+    }
+
+    if (res.status >= 500) { lastErr = new Error("The label reader is busy right now. Give it a moment and re-read."); continue; }
+
+    // Everything else is deterministic — an image too large, an unsupported format,
+    // one the reader could not make sense of. The server explains those precisely, so
+    // prefer its wording over a generic line that sends the user back to a photo that
+    // was never going to work.
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error((body && body.error) || "The label reader is unavailable right now. Enter the details by hand.");
+    }
 
     let data;
     try { data = await res.json(); }

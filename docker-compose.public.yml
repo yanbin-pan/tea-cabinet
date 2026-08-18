@@ -1,0 +1,41 @@
+# The public trial stack: a label reader with no cabinet.
+#
+#   ANTHROPIC_API_KEY=sk-ant-... docker compose -f docker-compose.public.yml up --build
+#
+# The frontend keeps the collection in the browser and the backend stores nothing, so
+# anyone can use this without an account and the operator holds none of their data.
+# That is the whole point of it — it is the version you can hand to a stranger.
+#
+# A separate file rather than an override of docker-compose.yml, because the two are
+# not variations on one deployment. This one has no volume, no Cloudflare Access, and
+# no collection routes at all; sharing a base would mostly be inheriting things that
+# must not be present here.
+services:
+  backend:
+    build: ./backend
+    environment:
+      PORT: 8080
+      # PUBLIC_MODE serves /api/scan to anonymous callers and does not mount the
+      # routes that touch stored data. There is deliberately no DATA_DIR volume
+      # below: nothing writes to disk, so nothing needs to survive the container.
+      PUBLIC_MODE: "1"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: claude-sonnet-4-6
+      # Sized for one replica and for a trial rather than for a service. Raise them
+      # once you know what real use looks like — and read the note in the README
+      # about counters being per-replica before you do.
+      SCAN_DAILY_PER_CALLER: ${SCAN_DAILY_PER_CALLER:-10}
+      SCAN_DAILY_TOTAL: ${SCAN_DAILY_TOTAL:-100}
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the bundle at build time. Changing it means rebuilding the image.
+        VITE_LOCAL_ONLY: "1"
+    depends_on:
+      - backend
+    ports:
+      - "8081:80"
