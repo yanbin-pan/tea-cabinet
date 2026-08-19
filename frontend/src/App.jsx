@@ -20,6 +20,31 @@ const TYPE_COLORS = {
 const GRADES = ["Everyday", "Standard", "Premium", "Competition", "Imperial / Gong Ting"];
 const RARITY = ["Common", "Uncommon", "Rare", "Very rare"];
 
+// Caffeine is stored as free text ("~30 mg", "caffeine-free"), so filtering has
+// to work off the parsed mg number. Buckets are named after how a cup drinks,
+// not exact figures, because the underlying numbers are approximate anyway.
+// "Unlisted" is its own bucket: a tea with no caffeine noted is not low-caffeine.
+const CAFFEINE_LEVELS = [
+  { key: "None", label: "Caffeine-free", test: (mg) => mg === 0 },
+  { key: "Low", label: "Low", hint: "up to 25 mg", test: (mg) => mg > 0 && mg <= 25 },
+  { key: "Medium", label: "Medium", hint: "26–50 mg", test: (mg) => mg > 25 && mg <= 50 },
+  { key: "High", label: "High", hint: "over 50 mg", test: (mg) => mg > 50 },
+  { key: "Unlisted", label: "Unlisted", test: (mg) => mg === null },
+];
+
+// Which bucket a record falls in, or null if the level is unrecognised.
+export function caffeineLevelOf(tea) {
+  const mg = parseCaffeineMg(tea?.caffeine);
+  return CAFFEINE_LEVELS.find((l) => l.test(mg))?.key ?? null;
+}
+
+// The fields a search query is matched against. Shared by the visible results
+// and the caffeine counts so the two can never disagree about what is in scope.
+function matchesSearch(tea, q) {
+  if (!q) return true;
+  return [tea.englishName, tea.chineseName, tea.flavourNotes, tea.origin, tea.type, tea.grade, tea.rarity, tea.harvestYear].join(" ").toLowerCase().includes(q);
+}
+
 const BLANK = { id: null, englishName: "", chineseName: "", type: "", flavourNotes: "", brewTemp: "", steepTime: "", origin: "", harvestYear: "", rarity: "", grade: "", caffeine: "", reasoning: "", photo: null, createdAt: null };
 
 // Same-origin in production (nginx proxies /api to the backend); override for
@@ -43,6 +68,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("All");
+  const [caffeineFilter, setCaffeineFilter] = useState("All");
   const [editing, setEditing] = useState(null);
   const [detail, setDetail] = useState(null);
   const [toast, setToast] = useState(null);
@@ -121,10 +147,10 @@ export default function App() {
     const q = query.trim().toLowerCase();
     return collection.filter((t) => {
       if (typeFilter !== "All" && t.type !== typeFilter) return false;
-      if (!q) return true;
-      return [t.englishName, t.chineseName, t.flavourNotes, t.origin, t.type, t.grade, t.rarity, t.harvestYear].join(" ").toLowerCase().includes(q);
+      if (caffeineFilter !== "All" && caffeineLevelOf(t) !== caffeineFilter) return false;
+      return matchesSearch(t, q);
     });
-  }, [collection, query, typeFilter]);
+  }, [collection, query, typeFilter, caffeineFilter]);
 
   const typeCounts = useMemo(() => {
     const m = { All: collection.length };
@@ -133,6 +159,23 @@ export default function App() {
   }, [collection]);
 
   const activeTypes = ["All", ...TEA_TYPES.filter((t) => typeCounts[t])];
+
+  // Counted over the type-and-search result rather than the whole cabinet, so a
+  // caffeine chip never promises matches the other filters have already excluded.
+  const caffeineCounts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const inScope = collection.filter((t) => (typeFilter === "All" || t.type === typeFilter) && matchesSearch(t, q));
+    const m = { All: inScope.length };
+    for (const t of inScope) {
+      const level = caffeineLevelOf(t);
+      if (level) m[level] = (m[level] || 0) + 1;
+    }
+    return m;
+  }, [collection, query, typeFilter]);
+
+  // Only offer levels the cabinet actually holds; "All" stays so the filter can
+  // always be cleared, including when the current pick has dropped to zero.
+  const activeCaffeine = [{ key: "All", label: "All caffeine" }, ...CAFFEINE_LEVELS.filter((l) => caffeineCounts[l.key] || caffeineFilter === l.key)];
 
   const exportJson = useCallback(() => {
     if (collection.length === 0) { showToast("Nothing to export yet", "err"); return; }
@@ -272,6 +315,19 @@ export default function App() {
             );
           })}
         </div>
+        <div style={S.chipGroup}>
+          <span style={S.chipGroupLabel}><Zap size={13} strokeWidth={2.2} /> Caffeine</span>
+          <div style={S.chips}>
+            {activeCaffeine.map((l) => {
+              const active = caffeineFilter === l.key;
+              return (
+                <button key={l.key} onClick={() => setCaffeineFilter(l.key)} className="chip" style={{ ...S.chip, ...(active ? S.chipActive : {}) }} title={l.hint ? `${l.label} — ${l.hint}` : l.label}>
+                  {l.label}<span style={S.chipCount}>{caffeineCounts[l.key] || 0}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {!ready ? (
@@ -286,7 +342,7 @@ export default function App() {
           <button className="btn" onClick={() => window.location.reload()}>Try again</button>
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState hasAny={collection.length > 0} onAdd={() => setEditing({ ...BLANK })} onClear={() => { setQuery(""); setTypeFilter("All"); }} />
+        <EmptyState hasAny={collection.length > 0} onAdd={() => setEditing({ ...BLANK })} onClear={() => { setQuery(""); setTypeFilter("All"); setCaffeineFilter("All"); }} />
       ) : (
         <div style={S.grid}>{filtered.map((tea) => <TeaCard key={tea.id} tea={tea} onOpen={() => setDetail(tea)} />)}</div>
       )}
@@ -736,6 +792,8 @@ const S = {
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #E4DECF", borderRadius: 11, padding: "0 12px", height: 42, flex: "1 1 260px", minWidth: 220 },
   search: { border: "none", outline: "none", background: "transparent", fontSize: 14.5, flex: 1, color: INK, fontFamily: "inherit" },
   chips: { display: "flex", gap: 7, flexWrap: "wrap" },
+  chipGroup: { display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" },
+  chipGroupLabel: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, letterSpacing: 0.3, textTransform: "uppercase", color: "#9a9482" },
   chip: { display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E4DECF", background: "#fff", color: "#736C5C", fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" },
   chipActive: { background: INK, color: PAPER, borderColor: INK },
   chipDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
