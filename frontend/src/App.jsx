@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Search, Plus, X, Leaf, Pencil, Trash2, Save, MapPin, Calendar, Droplet, Award, Camera, Upload, Loader2, AlertCircle, Check, Download, FileUp, Zap, Layers } from "lucide-react";
 import { ApiError, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId, dataUrlToBlob } from "./api.js";
+import { LanguageProvider, useI18n, LANGUAGES, vocab, translateError } from "./i18n.js";
 
 const TEA_TYPES = ["Green", "White", "Yellow", "Oolong", "Black", "Dark", "Pu-erh", "Scented", "Herbal", "Other"];
 
@@ -24,12 +25,14 @@ const RARITY = ["Common", "Uncommon", "Rare", "Very rare"];
 // to work off the parsed mg number. Buckets are named after how a cup drinks,
 // not exact figures, because the underlying numbers are approximate anyway.
 // "Unlisted" is its own bucket: a tea with no caffeine noted is not low-caffeine.
+// The key doubles as the translation lookup ("caffeine.Low") and as the stored
+// filter value, so a language switch never changes which teas are selected.
 const CAFFEINE_LEVELS = [
-  { key: "None", label: "Caffeine-free", test: (mg) => mg === 0 },
-  { key: "Low", label: "Low", hint: "up to 25 mg", test: (mg) => mg > 0 && mg <= 25 },
-  { key: "Medium", label: "Medium", hint: "26–50 mg", test: (mg) => mg > 25 && mg <= 50 },
-  { key: "High", label: "High", hint: "over 50 mg", test: (mg) => mg > 50 },
-  { key: "Unlisted", label: "Unlisted", test: (mg) => mg === null },
+  { key: "None", test: (mg) => mg === 0 },
+  { key: "Low", hinted: true, test: (mg) => mg > 0 && mg <= 25 },
+  { key: "Medium", hinted: true, test: (mg) => mg > 25 && mg <= 50 },
+  { key: "High", hinted: true, test: (mg) => mg > 50 },
+  { key: "Unlisted", test: (mg) => mg === null },
 ];
 
 // Which bucket a record falls in, or null if the level is unrecognised.
@@ -63,7 +66,18 @@ export function srcFor(photo) {
 let _idCounter = 0;
 function uniqueId() { return `t-${Date.now()}-${(_idCounter++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`; }
 
+// The provider sits above everything so any component can reach the chosen
+// language without threading it through props.
 export default function App() {
+  return (
+    <LanguageProvider>
+      <Cabinet />
+    </LanguageProvider>
+  );
+}
+
+function Cabinet() {
+  const { t, lang } = useI18n();
   const [collection, setCollection] = useState([]);
   const [ready, setReady] = useState(false);
   const [query, setQuery] = useState("");
@@ -94,12 +108,12 @@ export default function App() {
       setSaveState("error");
       const authExpired = err instanceof ApiError && err.kind === "auth";
       showToast(
-        authExpired ? "Your session expired — reload the page to sign in again." : (err.message || "Could not save your change."),
+        authExpired ? t("err.sessionExpired") : translateError(lang, err, "err.saveFailed"),
         "err"
       );
       return false;
     }
-  }, [showToast]);
+  }, [showToast, t, lang]);
 
   useEffect(() => {
     let alive = true;
@@ -110,64 +124,67 @@ export default function App() {
         setEmail(email);
         // Backfill any fields added in later versions (e.g. caffeine) so older
         // records don't carry undefined values into the edit form.
-        setCollection(teas.map((t) => ({ ...BLANK, ...t })));
+        setCollection(teas.map((tea) => ({ ...BLANK, ...tea })));
         // "Unreachable" and "empty" are different facts and must not look alike.
-        if (source === "cache") showToast("Offline — showing your last saved copy", "err");
-        if (source === "unavailable") setLoadError("Could not reach the server.");
+        if (source === "cache") showToast(t("toast.offline"), "err");
+        if (source === "unavailable") setLoadError({ key: "err.unreachable" });
       } catch (err) {
         if (!alive) return;
-        setLoadError(err instanceof ApiError ? err.message : "Could not load your collection.");
+        setLoadError(err instanceof ApiError ? { error: err } : { key: "err.loadFailed" });
       } finally {
         if (alive) setReady(true);
       }
     })();
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reloading the
+    // collection on a language change would be a pointless refetch; the stored
+    // failure reason is translated at render time instead.
   }, [showToast]);
 
   const save = useCallback(async (draft) => {
-    const isUpdate = Boolean(draft.id) && collection.some((t) => t.id === draft.id);
+    const isUpdate = Boolean(draft.id) && collection.some((tea) => tea.id === draft.id);
     const next = isUpdate
-      ? collection.map((t) => (t.id === draft.id ? draft : t))
+      ? collection.map((tea) => (tea.id === draft.id ? draft : tea))
       : [{ ...draft, id: draft.id || uniqueId(), createdAt: draft.createdAt || Date.now() }, ...collection];
 
     setCollection(next);
     setEditing(null);
     // Success is claimed only once the server has confirmed the write.
-    if (await commit(next)) showToast(isUpdate ? "Tea updated" : "Tea added to your collection");
-  }, [collection, commit, showToast]);
+    if (await commit(next)) showToast(isUpdate ? t("toast.teaUpdated") : t("toast.teaAdded"));
+  }, [collection, commit, showToast, t]);
 
   const remove = useCallback(async (id) => {
-    const next = collection.filter((t) => t.id !== id);
+    const next = collection.filter((tea) => tea.id !== id);
     setCollection(next);
     setDetail(null);
-    if (await commit(next)) showToast("Removed from collection");
-  }, [collection, commit, showToast]);
+    if (await commit(next)) showToast(t("toast.removed"));
+  }, [collection, commit, showToast, t]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return collection.filter((t) => {
-      if (typeFilter !== "All" && t.type !== typeFilter) return false;
-      if (caffeineFilter !== "All" && caffeineLevelOf(t) !== caffeineFilter) return false;
-      return matchesSearch(t, q);
+    return collection.filter((tea) => {
+      if (typeFilter !== "All" && tea.type !== typeFilter) return false;
+      if (caffeineFilter !== "All" && caffeineLevelOf(tea) !== caffeineFilter) return false;
+      return matchesSearch(tea, q);
     });
   }, [collection, query, typeFilter, caffeineFilter]);
 
   const typeCounts = useMemo(() => {
     const m = { All: collection.length };
-    for (const t of collection) m[t.type] = (m[t.type] || 0) + 1;
+    for (const tea of collection) m[tea.type] = (m[tea.type] || 0) + 1;
     return m;
   }, [collection]);
 
-  const activeTypes = ["All", ...TEA_TYPES.filter((t) => typeCounts[t])];
+  const activeTypes = ["All", ...TEA_TYPES.filter((type) => typeCounts[type])];
 
   // Counted over the type-and-search result rather than the whole cabinet, so a
   // caffeine chip never promises matches the other filters have already excluded.
   const caffeineCounts = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const inScope = collection.filter((t) => (typeFilter === "All" || t.type === typeFilter) && matchesSearch(t, q));
+    const inScope = collection.filter((tea) => (typeFilter === "All" || tea.type === typeFilter) && matchesSearch(tea, q));
     const m = { All: inScope.length };
-    for (const t of inScope) {
-      const level = caffeineLevelOf(t);
+    for (const tea of inScope) {
+      const level = caffeineLevelOf(tea);
       if (level) m[level] = (m[level] || 0) + 1;
     }
     return m;
@@ -175,10 +192,10 @@ export default function App() {
 
   // Only offer levels the cabinet actually holds; "All" stays so the filter can
   // always be cleared, including when the current pick has dropped to zero.
-  const activeCaffeine = [{ key: "All", label: "All caffeine" }, ...CAFFEINE_LEVELS.filter((l) => caffeineCounts[l.key] || caffeineFilter === l.key)];
+  const activeCaffeine = [{ key: "All" }, ...CAFFEINE_LEVELS.filter((l) => caffeineCounts[l.key] || caffeineFilter === l.key)];
 
   const exportJson = useCallback(() => {
-    if (collection.length === 0) { showToast("Nothing to export yet", "err"); return; }
+    if (collection.length === 0) { showToast(t("toast.nothingToExport"), "err"); return; }
     try {
       const payload = { app: "The Tea Cabinet", version: 1, exportedAt: new Date().toISOString(), teas: collection };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -188,9 +205,9 @@ export default function App() {
       a.href = url; a.download = `tea-cabinet-${stamp}.json`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast(`Exported ${collection.length} ${collection.length === 1 ? "tea" : "teas"}`);
-    } catch (e) { showToast("Export failed", "err"); }
-  }, [collection, showToast]);
+      showToast(t("toast.exported", { count: collection.length }));
+    } catch (e) { showToast(t("toast.exportFailed"), "err"); }
+  }, [collection, showToast, t]);
 
   const importJson = useCallback(async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -203,12 +220,12 @@ export default function App() {
       incoming = Array.isArray(data) ? data : data.teas;
       if (!Array.isArray(incoming)) throw new Error("bad shape");
     } catch (err) {
-      showToast("Couldn't read that file — expected a Tea Cabinet export", "err");
+      showToast(t("toast.badImportFile"), "err");
       return;
     }
 
     setSaveState("saving");
-    const byId = new Map(collection.map((t) => [t.id, t]));
+    const byId = new Map(collection.map((tea) => [tea.id, tea]));
     let added = 0, updated = 0, failedPhotos = 0;
 
     for (const raw of incoming) {
@@ -246,12 +263,12 @@ export default function App() {
     // Success is claimed only once the server has confirmed the write.
     if (await commit(next)) {
       const parts = [];
-      if (added) parts.push(`${added} added`);
-      if (updated) parts.push(`${updated} updated`);
-      if (failedPhotos) parts.push(`${failedPhotos} photo${failedPhotos === 1 ? "" : "s"} skipped`);
-      showToast(`Import complete — ${parts.length ? parts.join(", ") : "no teas found"}`);
+      if (added) parts.push(t("import.added", { count: added }));
+      if (updated) parts.push(t("import.updated", { count: updated }));
+      if (failedPhotos) parts.push(t("import.photosSkipped", { count: failedPhotos }));
+      showToast(t("toast.importComplete", { summary: parts.length ? parts.join(", ") : t("import.none") }));
     }
-  }, [collection, commit, showToast]);
+  }, [collection, commit, showToast, t]);
 
   const dedupe = useCallback(async () => {
     const seen = new Map();
@@ -269,9 +286,9 @@ export default function App() {
 
     setCollection(next);
     if (await commit(next)) {
-      showToast(removed > 0 ? `Removed ${removed} duplicate ${removed === 1 ? "tea" : "teas"}` : "No duplicates found");
+      showToast(removed > 0 ? t("toast.dupesRemoved", { count: removed }) : t("toast.noDupes"));
     }
-  }, [collection, commit, showToast]);
+  }, [collection, commit, showToast, t]);
 
   return (
     <div style={S.root}>
@@ -280,49 +297,51 @@ export default function App() {
         <div style={S.brandRow}>
           <div style={S.mark}><span style={S.markHanzi}>茶</span></div>
           <div>
-            <h1 style={S.h1}>The Tea Cabinet</h1>
-            <p style={S.sub}>A personal inventory of Chinese tea · {collection.length} {collection.length === 1 ? "entry" : "entries"}</p>
+            <h1 style={S.h1}>{t("app.title")}</h1>
+            <p style={S.sub}>{t("app.subtitle")} · {t("app.entries", { count: collection.length })}</p>
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {email && <span style={S.whoami}>{email}</span>}
-          {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> Saving…</span>}
-          {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> Saved</span>}
-          {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> Not saved</span>}
+          {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> {t("header.saving")}</span>}
+          {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> {t("header.saved")}</span>}
+          {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> {t("header.notSaved")}</span>}
+          <LanguageToggle />
           <label className="btn" style={{ cursor: "pointer" }}>
-            <FileUp size={15} /> Import
+            <FileUp size={15} /> {t("header.import")}
             <input type="file" accept="application/json,.json" onChange={importJson} style={{ display: "none" }} />
           </label>
-          <button className="btn" onClick={exportJson}><Download size={15} /> Export</button>
-          {collection.length > 1 && <button className="btn" onClick={dedupe} title="Merge duplicate entries"><Layers size={15} /> Dedupe</button>}
-          <button className="btn btn-primary" onClick={() => setEditing({ ...BLANK })}><Plus size={16} strokeWidth={2.2} /> Add tea</button>
+          <button className="btn" onClick={exportJson}><Download size={15} /> {t("header.export")}</button>
+          {collection.length > 1 && <button className="btn" onClick={dedupe} title={t("header.dedupeTitle")}><Layers size={15} /> {t("header.dedupe")}</button>}
+          <button className="btn btn-primary" onClick={() => setEditing({ ...BLANK })}><Plus size={16} strokeWidth={2.2} /> {t("header.addTea")}</button>
         </div>
       </header>
 
       <div style={S.controls}>
         <div style={S.searchWrap}>
           <Search size={17} style={{ color: "#9a9482", flexShrink: 0 }} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, flavour, origin…" style={S.search} className="tea-search" />
-          {query && <button className="clear-x" onClick={() => setQuery("")} aria-label="Clear search"><X size={15} /></button>}
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("search.placeholder")} style={S.search} className="tea-search" />
+          {query && <button className="clear-x" onClick={() => setQuery("")} aria-label={t("search.clear")}><X size={15} /></button>}
         </div>
         <div style={S.chips}>
-          {activeTypes.map((t) => {
-            const active = typeFilter === t; const c = TYPE_COLORS[t];
+          {activeTypes.map((type) => {
+            const active = typeFilter === type; const c = TYPE_COLORS[type];
             return (
-              <button key={t} onClick={() => setTypeFilter(t)} className="chip" style={{ ...S.chip, ...(active ? S.chipActive : {}), ...(active && c ? { background: c.bg, color: c.fg, borderColor: c.dot } : {}) }}>
-                {c && <span style={{ ...S.chipDot, background: c.dot }} />}{t}<span style={S.chipCount}>{typeCounts[t] || 0}</span>
+              <button key={type} onClick={() => setTypeFilter(type)} className="chip" style={{ ...S.chip, ...(active ? S.chipActive : {}), ...(active && c ? { background: c.bg, color: c.fg, borderColor: c.dot } : {}) }}>
+                {c && <span style={{ ...S.chipDot, background: c.dot }} />}{type === "All" ? t("filter.all") : vocab(lang, "type", type)}<span style={S.chipCount}>{typeCounts[type] || 0}</span>
               </button>
             );
           })}
         </div>
         <div style={S.chipGroup}>
-          <span style={S.chipGroupLabel}><Zap size={13} strokeWidth={2.2} /> Caffeine</span>
+          <span style={S.chipGroupLabel}><Zap size={13} strokeWidth={2.2} /> {t("filter.caffeine")}</span>
           <div style={S.chips}>
             {activeCaffeine.map((l) => {
               const active = caffeineFilter === l.key;
+              const label = l.key === "All" ? t("filter.allCaffeine") : t(`caffeine.${l.key}`);
               return (
-                <button key={l.key} onClick={() => setCaffeineFilter(l.key)} className="chip" style={{ ...S.chip, ...(active ? S.chipActive : {}) }} title={l.hint ? `${l.label} — ${l.hint}` : l.label}>
-                  {l.label}<span style={S.chipCount}>{caffeineCounts[l.key] || 0}</span>
+                <button key={l.key} onClick={() => setCaffeineFilter(l.key)} className="chip" style={{ ...S.chip, ...(active ? S.chipActive : {}) }} title={l.hinted ? `${label} — ${t(`caffeine.hint.${l.key}`)}` : label}>
+                  {label}<span style={S.chipCount}>{caffeineCounts[l.key] || 0}</span>
                 </button>
               );
             })}
@@ -331,15 +350,15 @@ export default function App() {
       </div>
 
       {!ready ? (
-        <div style={S.empty}><Loader2 className="spin" size={22} /><span style={{ marginTop: 10 }}>Opening the cabinet…</span></div>
+        <div style={S.empty}><Loader2 className="spin" size={22} /><span style={{ marginTop: 10 }}>{t("state.opening")}</span></div>
       ) : loadError ? (
         // A server we could not reach must never be drawn as an empty cabinet:
         // that is the reading that made a data loss look like a normal state.
         <div style={S.empty}>
           <AlertCircle size={26} color="#B3261E" />
-          <p style={{ ...S.emptyTitle, marginTop: 12 }}>{loadError}</p>
-          <p style={S.emptySub}>Your teas are not lost — they are on the server. Reload once it is reachable again.</p>
-          <button className="btn" onClick={() => window.location.reload()}>Try again</button>
+          <p style={{ ...S.emptyTitle, marginTop: 12 }}>{loadError.key ? t(loadError.key) : translateError(lang, loadError.error, "err.loadFailed")}</p>
+          <p style={S.emptySub}>{t("state.notLost")}</p>
+          <button className="btn" onClick={() => window.location.reload()}>{t("state.tryAgain")}</button>
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState hasAny={collection.length > 0} onAdd={() => setEditing({ ...BLANK })} onClear={() => { setQuery(""); setTypeFilter("All"); setCaffeineFilter("All"); }} />
@@ -354,18 +373,43 @@ export default function App() {
   );
 }
 
+// A segmented control rather than a select: three options are few enough to
+// show at once, and each one is written in its own language so it is legible to
+// someone who cannot yet read the language the app is currently in.
+function LanguageToggle() {
+  const { lang, setLang, t } = useI18n();
+  return (
+    <div style={S.langGroup} role="group" aria-label={t("lang.label")}>
+      {LANGUAGES.map((l) => (
+        <button
+          key={l.code}
+          onClick={() => setLang(l.code)}
+          className="lang-btn"
+          style={{ ...S.langBtn, ...(lang === l.code ? S.langBtnActive : {}) }}
+          aria-pressed={lang === l.code}
+          title={l.label}
+          lang={l.code}
+        >
+          {l.short}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TeaCard({ tea, onOpen }) {
+  const { t, lang } = useI18n();
   const c = TYPE_COLORS[tea.type] || TYPE_COLORS.Other;
   return (
     <button className="tea-card" style={S.card} onClick={onOpen}>
       <div style={{ ...S.cardTop, background: c.bg }}>
         {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.cardImg} /> : <span style={{ ...S.cardHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || <Leaf size={30} color={c.dot} />}</span>}
-        <span style={{ ...S.typeTag, background: c.dot }}>{tea.type || "—"}</span>
-        {tea.grade && <span style={S.gradeTag}>{tea.grade}</span>}
+        <span style={{ ...S.typeTag, background: c.dot }}>{vocab(lang, "type", tea.type) || "—"}</span>
+        {tea.grade && <span style={S.gradeTag}>{vocab(lang, "grade", tea.grade)}</span>}
       </div>
       <div style={S.cardBody}>
         <div style={S.cardNames}>
-          <span style={S.cardEn}>{tea.englishName || "Untitled tea"}</span>
+          <span style={S.cardEn}>{tea.englishName || t("card.untitled")}</span>
           {tea.chineseName && <span style={S.cardZh}>{tea.chineseName}</span>}
         </div>
         {tea.flavourNotes && <p style={S.cardFlavour}>{tea.flavourNotes}</p>}
@@ -379,19 +423,21 @@ function TeaCard({ tea, onOpen }) {
 }
 
 function EmptyState({ hasAny, onAdd, onClear }) {
+  const { t } = useI18n();
   return (
     <div style={S.empty}>
       <div style={S.emptyMark}>茶</div>
       {hasAny ? (
-        <><p style={S.emptyTitle}>No teas match that</p><p style={S.emptySub}>Try a different search or clear the filters.</p><button className="btn" onClick={onClear} style={{ marginTop: 4 }}>Clear filters</button></>
+        <><p style={S.emptyTitle}>{t("empty.noMatchTitle")}</p><p style={S.emptySub}>{t("empty.noMatchSub")}</p><button className="btn" onClick={onClear} style={{ marginTop: 4 }}>{t("empty.clearFilters")}</button></>
       ) : (
-        <><p style={S.emptyTitle}>The cabinet is empty</p><p style={S.emptySub}>Add your first tea by hand, or snap a photo of the packet to fill it in.</p><button className="btn btn-primary" onClick={onAdd} style={{ marginTop: 4 }}><Plus size={16} /> Add your first tea</button></>
+        <><p style={S.emptyTitle}>{t("empty.cabinetTitle")}</p><p style={S.emptySub}>{t("empty.cabinetSub")}</p><button className="btn btn-primary" onClick={onAdd} style={{ marginTop: 4 }}><Plus size={16} /> {t("empty.addFirst")}</button></>
       )}
     </div>
   );
 }
 
 function EditModal({ draft, onClose, onSave, onToast }) {
+  const { t, lang } = useI18n();
   const [form, setForm] = useState(draft);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -411,7 +457,7 @@ function EditModal({ draft, onClose, onSave, onToast }) {
     if (!file) return;
     setScanError(null); setScanned(false);
     if (file.type && file.type.indexOf("image/") !== 0 && !/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name || "")) {
-      setScanError("That doesn't look like an image. Upload a JPEG, PNG, or photo of the packet.");
+      setScanError(t("err.notImage"));
       e.target.value = ""; return;
     }
     try {
@@ -429,18 +475,18 @@ function EditModal({ draft, onClose, onSave, onToast }) {
         // Drop the preview too: showing a photo the record is not going to keep
         // is the same class of lie this whole change exists to remove.
         setPreview(null);
-        setScanError(err instanceof ApiError ? err.message : "Could not upload that photo.");
+        setScanError(translateError(lang, err, "err.api.photoNetwork"));
         return;
       }
       await runScan(dataUrl);
-    } catch (err) { setScanError((err && err.message) || "Couldn't read that file. Try another photo."); }
+    } catch (err) { setScanError((err && err.message) || t("err.readFile")); }
     finally { e.target.value = ""; }
   };
 
   const runScan = async (dataUrl) => {
     setScanning(true); setScanError(null);
     try {
-      const parsed = await readLabelWithClaude(dataUrl);
+      const parsed = await readLabelWithClaude(dataUrl, lang);
       setForm((f) => ({ ...f,
         englishName: parsed.englishName || f.englishName,
         chineseName: parsed.chineseName || f.chineseName,
@@ -455,13 +501,13 @@ function EditModal({ draft, onClose, onSave, onToast }) {
         reasoning: parsed.reasoning || f.reasoning,
       }));
       setScanned(true);
-      onToast("Label read — review the fields below", "ok");
-    } catch (err) { setScanError(err.message || "Couldn't read that label. Fill the fields in by hand."); }
+      onToast(t("err.labelRead"), "ok");
+    } catch (err) { setScanError(err.message || t("err.readLabel")); }
     finally { setScanning(false); }
   };
 
   const submit = () => {
-    if (!form.englishName.trim() && !form.chineseName.trim()) { setScanError("Give the tea at least an English or Chinese name."); return; }
+    if (!form.englishName.trim() && !form.chineseName.trim()) { setScanError(t("err.needName")); return; }
     onSave(form);
   };
 
@@ -470,47 +516,47 @@ function EditModal({ draft, onClose, onSave, onToast }) {
     <Overlay onClose={onClose}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
-          <h2 style={S.modalTitle}>{draft.id ? "Edit tea" : "Add a tea"}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <h2 style={S.modalTitle}>{draft.id ? t("edit.titleEdit") : t("edit.titleAdd")}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}><X size={18} /></button>
         </div>
         <div style={S.modalScroll}>
           <div style={{ ...S.intake, background: c.bg }}>
-            {preview || form.photo ? <img src={preview || srcFor(form.photo)} alt="Tea packet" style={S.intakeImg} /> : <div style={S.intakeIcon}><Camera size={26} color={c.dot} /></div>}
+            {preview || form.photo ? <img src={preview || srcFor(form.photo)} alt={t("edit.packetAlt")} style={S.intakeImg} /> : <div style={S.intakeIcon}><Camera size={26} color={c.dot} /></div>}
             <div style={{ flex: 1 }}>
-              <p style={S.intakeTitle}>Read the label</p>
-              <p style={S.intakeSub}>Upload a photo of the packet and Claude will translate the Chinese and fill in the fields for you to review.</p>
+              <p style={S.intakeTitle}>{t("edit.readLabel")}</p>
+              <p style={S.intakeSub}>{t("edit.readLabelSub")}</p>
               <div style={S.intakeBtns}>
                 <label className="btn btn-small" style={{ cursor: "pointer" }}>
-                  <Upload size={14} /> {form.photo ? "Replace photo" : "Upload photo"}
+                  <Upload size={14} /> {form.photo ? t("edit.replacePhoto") : t("edit.uploadPhoto")}
                   <input type="file" accept="image/*" onChange={onFile} style={{ display: "none" }} />
                 </label>
-                {scanSrc && !scanning && <button className="btn btn-small" onClick={() => runScan(scanSrc)}><Camera size={14} /> Re-read</button>}
+                {scanSrc && !scanning && <button className="btn btn-small" onClick={() => runScan(scanSrc)}><Camera size={14} /> {t("edit.reread")}</button>}
               </div>
             </div>
           </div>
 
-          {scanning && <div style={S.scanState}><Loader2 className="spin" size={16} /> Reading the label — translating and grading…</div>}
-          {scanned && !scanning && <div style={{ ...S.scanState, ...S.scanOk }}><Check size={16} /> Fields filled from the label. Edit anything below before saving.</div>}
+          {scanning && <div style={S.scanState}><Loader2 className="spin" size={16} /> {t("edit.scanning")}</div>}
+          {scanned && !scanning && <div style={{ ...S.scanState, ...S.scanOk }}><Check size={16} /> {t("edit.scanned")}</div>}
           {scanError && <div style={{ ...S.scanState, ...S.scanErr }}><AlertCircle size={16} /> {scanError}</div>}
 
           <div style={S.fieldGrid}>
-            <Field label="English name" full><input value={form.englishName} onChange={(e) => set("englishName", e.target.value)} placeholder="Dragon Well" className="fld" /></Field>
-            <Field label="Chinese name 中文名" full><input value={form.chineseName} onChange={(e) => set("chineseName", e.target.value)} placeholder="西湖龙井" className="fld" /></Field>
-            <Field label="Tea type"><select value={form.type} onChange={(e) => set("type", e.target.value)} className="fld"><option value="">Choose…</option>{TEA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
-            <Field label="Harvest year"><input value={form.harvestYear} onChange={(e) => set("harvestYear", e.target.value)} placeholder="2024" className="fld" /></Field>
-            <Field label="Flavour notes" full><textarea value={form.flavourNotes} onChange={(e) => set("flavourNotes", e.target.value)} placeholder="Chestnut, fresh grass, gentle sweetness" className="fld" rows={2} /></Field>
-            <Field label="Water temp (°C)"><input value={form.brewTemp} onChange={(e) => set("brewTemp", e.target.value)} placeholder="80" className="fld" /></Field>
-            <Field label="Steep time"><input value={form.steepTime} onChange={(e) => set("steepTime", e.target.value)} placeholder="1–2 min" className="fld" /></Field>
-            <Field label="Caffeine / gaiwan cup"><input value={form.caffeine} onChange={(e) => set("caffeine", e.target.value)} placeholder="~30 mg" className="fld" /></Field>
-            <Field label="Origin" full><input value={form.origin} onChange={(e) => set("origin", e.target.value)} placeholder="West Lake, Hangzhou, Zhejiang" className="fld" /></Field>
-            <Field label="Grade"><select value={form.grade} onChange={(e) => set("grade", e.target.value)} className="fld"><option value="">Unknown</option>{GRADES.map((g) => <option key={g} value={g}>{g}</option>)}</select></Field>
-            <Field label="Rarity"><select value={form.rarity} onChange={(e) => set("rarity", e.target.value)} className="fld"><option value="">Choose…</option>{RARITY.map((r) => <option key={r} value={r}>{r}</option>)}</select></Field>
-            <Field label="Grading reasoning" full><textarea value={form.reasoning} onChange={(e) => set("reasoning", e.target.value)} placeholder="Why this grade / rarity — from the label and general knowledge of Chinese tea grading." className="fld" rows={2} /></Field>
+            <Field label={t("field.englishName")} full><input value={form.englishName} onChange={(e) => set("englishName", e.target.value)} placeholder={t("ph.englishName")} className="fld" /></Field>
+            <Field label={t("field.chineseName")} full><input value={form.chineseName} onChange={(e) => set("chineseName", e.target.value)} placeholder={t("ph.chineseName")} className="fld" /></Field>
+            <Field label={t("field.teaType")}><select value={form.type} onChange={(e) => set("type", e.target.value)} className="fld"><option value="">{t("select.choose")}</option>{TEA_TYPES.map((v) => <option key={v} value={v}>{vocab(lang, "type", v)}</option>)}</select></Field>
+            <Field label={t("field.harvestYear")}><input value={form.harvestYear} onChange={(e) => set("harvestYear", e.target.value)} placeholder={t("ph.harvestYear")} className="fld" /></Field>
+            <Field label={t("field.flavourNotes")} full><textarea value={form.flavourNotes} onChange={(e) => set("flavourNotes", e.target.value)} placeholder={t("ph.flavourNotes")} className="fld" rows={2} /></Field>
+            <Field label={t("field.waterTemp")}><input value={form.brewTemp} onChange={(e) => set("brewTemp", e.target.value)} placeholder={t("ph.brewTemp")} className="fld" /></Field>
+            <Field label={t("field.steepTime")}><input value={form.steepTime} onChange={(e) => set("steepTime", e.target.value)} placeholder={t("ph.steepTime")} className="fld" /></Field>
+            <Field label={t("field.caffeine")}><input value={form.caffeine} onChange={(e) => set("caffeine", e.target.value)} placeholder={t("ph.caffeine")} className="fld" /></Field>
+            <Field label={t("field.origin")} full><input value={form.origin} onChange={(e) => set("origin", e.target.value)} placeholder={t("ph.origin")} className="fld" /></Field>
+            <Field label={t("field.grade")}><select value={form.grade} onChange={(e) => set("grade", e.target.value)} className="fld"><option value="">{t("select.unknown")}</option>{GRADES.map((g) => <option key={g} value={g}>{vocab(lang, "grade", g)}</option>)}</select></Field>
+            <Field label={t("field.rarity")}><select value={form.rarity} onChange={(e) => set("rarity", e.target.value)} className="fld"><option value="">{t("select.choose")}</option>{RARITY.map((r) => <option key={r} value={r}>{vocab(lang, "rarity", r)}</option>)}</select></Field>
+            <Field label={t("field.reasoning")} full><textarea value={form.reasoning} onChange={(e) => set("reasoning", e.target.value)} placeholder={t("ph.reasoning")} className="fld" rows={2} /></Field>
           </div>
         </div>
         <div style={S.modalFoot}>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit}><Save size={15} /> {draft.id ? "Save changes" : "Save to collection"}</button>
+          <button className="btn" onClick={onClose}>{t("common.cancel")}</button>
+          <button className="btn btn-primary" onClick={submit}><Save size={15} /> {draft.id ? t("edit.saveChanges") : t("edit.saveToCollection")}</button>
         </div>
       </div>
     </Overlay>
@@ -518,50 +564,51 @@ function EditModal({ draft, onClose, onSave, onToast }) {
 }
 
 function DetailModal({ tea, onClose, onEdit, onDelete }) {
+  const { t, lang } = useI18n();
   const [confirm, setConfirm] = useState(false);
   const c = TYPE_COLORS[tea.type] || TYPE_COLORS.Other;
   return (
     <Overlay onClose={onClose}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={{ ...S.detailHero, background: c.bg }}>
-          <button className="icon-btn" style={S.detailClose} onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <button className="icon-btn" style={S.detailClose} onClick={onClose} aria-label={t("common.close")}><X size={18} /></button>
           {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.detailImg} /> : <span style={{ ...S.detailHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || (tea.englishName && tea.englishName[0]) || "茶"}</span>}
         </div>
         <div style={S.modalScroll}>
           <div style={S.detailNames}>
-            <div><h2 style={S.detailEn}>{tea.englishName || "Untitled tea"}</h2>{tea.chineseName && <p style={S.detailZh}>{tea.chineseName}</p>}</div>
-            <span style={{ ...S.typeTagLg, background: c.dot }}>{tea.type || "—"}</span>
+            <div><h2 style={S.detailEn}>{tea.englishName || t("card.untitled")}</h2>{tea.chineseName && <p style={S.detailZh}>{tea.chineseName}</p>}</div>
+            <span style={{ ...S.typeTagLg, background: c.dot }}>{vocab(lang, "type", tea.type) || "—"}</span>
           </div>
           {(tea.grade || tea.rarity) && (
             <div style={S.badges}>
-              {tea.grade && <span style={S.gradeBadge}><Award size={13} /> {tea.grade}</span>}
-              {tea.rarity && <span style={{ ...S.rarityBadge, ...rarityStyle(tea.rarity) }}>{tea.rarity}</span>}
+              {tea.grade && <span style={S.gradeBadge}><Award size={13} /> {vocab(lang, "grade", tea.grade)}</span>}
+              {tea.rarity && <span style={{ ...S.rarityBadge, ...rarityStyle(tea.rarity) }}>{vocab(lang, "rarity", tea.rarity)}</span>}
             </div>
           )}
-          {tea.flavourNotes && <Section title="Flavour"><p style={S.sectionText}>{tea.flavourNotes}</p></Section>}
-          <Section title="Brewing">
+          {tea.flavourNotes && <Section title={t("detail.flavour")}><p style={S.sectionText}>{tea.flavourNotes}</p></Section>}
+          <Section title={t("detail.brewing")}>
             <div style={S.brewRow}>
-              <div style={S.brewCell}><Droplet size={16} color={c.dot} /><span style={S.brewVal}>{tea.brewTemp ? `${tea.brewTemp}°C` : "—"}</span><span style={S.brewLbl}>water</span></div>
-              <div style={S.brewCell}><Calendar size={16} color={c.dot} /><span style={S.brewVal}>{tea.steepTime || "—"}</span><span style={S.brewLbl}>steep</span></div>
-              {tea.caffeine && <div style={S.brewCell}><Zap size={16} color={c.dot} /><span style={S.brewVal}>{tea.caffeine}</span><span style={S.brewLbl}>caffeine / cup</span></div>}
+              <div style={S.brewCell}><Droplet size={16} color={c.dot} /><span style={S.brewVal}>{tea.brewTemp ? `${tea.brewTemp}°C` : "—"}</span><span style={S.brewLbl}>{t("detail.water")}</span></div>
+              <div style={S.brewCell}><Calendar size={16} color={c.dot} /><span style={S.brewVal}>{tea.steepTime || "—"}</span><span style={S.brewLbl}>{t("detail.steep")}</span></div>
+              {tea.caffeine && <div style={S.brewCell}><Zap size={16} color={c.dot} /><span style={S.brewVal}>{tea.caffeine}</span><span style={S.brewLbl}>{t("detail.caffeinePerCup")}</span></div>}
             </div>
           </Section>
           <CaffeineContext tea={tea} accent={c.dot} />
           {(tea.origin || tea.harvestYear) && (
-            <Section title="Provenance">
+            <Section title={t("detail.provenance")}>
               <div style={S.provRow}>
                 {tea.origin && <span style={S.provItem}><MapPin size={14} color={c.dot} /> {tea.origin}</span>}
-                {tea.harvestYear && <span style={S.provItem}><Calendar size={14} color={c.dot} /> Harvest {tea.harvestYear}</span>}
+                {tea.harvestYear && <span style={S.provItem}><Calendar size={14} color={c.dot} /> {t("detail.harvest", { year: tea.harvestYear })}</span>}
               </div>
             </Section>
           )}
-          {tea.reasoning && <Section title="Why this grade"><p style={{ ...S.sectionText, ...S.reasoning }}>{tea.reasoning}</p></Section>}
+          {tea.reasoning && <Section title={t("detail.whyGrade")}><p style={{ ...S.sectionText, ...S.reasoning }}>{tea.reasoning}</p></Section>}
         </div>
         <div style={S.modalFoot}>
           {confirm ? (
-            <><span style={S.confirmText}>Remove this tea?</span><button className="btn" onClick={() => setConfirm(false)}>Keep</button><button className="btn btn-danger" onClick={onDelete}><Trash2 size={15} /> Remove</button></>
+            <><span style={S.confirmText}>{t("detail.removeConfirm")}</span><button className="btn" onClick={() => setConfirm(false)}>{t("detail.keep")}</button><button className="btn btn-danger" onClick={onDelete}><Trash2 size={15} /> {t("common.remove")}</button></>
           ) : (
-            <><button className="btn btn-ghost-danger" onClick={() => setConfirm(true)}><Trash2 size={15} /> Remove</button><button className="btn btn-primary" onClick={onEdit}><Pencil size={15} /> Edit</button></>
+            <><button className="btn btn-ghost-danger" onClick={() => setConfirm(true)}><Trash2 size={15} /> {t("common.remove")}</button><button className="btn btn-primary" onClick={onEdit}><Pencil size={15} /> {t("common.edit")}</button></>
           )}
         </div>
       </div>
@@ -585,6 +632,14 @@ function Overlay({ children, onClose }) {
 }
 
 const SCAN_SYSTEM = "You read photos of Chinese tea packaging and return a single JSON object describing the tea. Translate any Chinese on the label. Infer tea type, brewing guidance, origin, harvest year, and an approximate rarity and grade using the label plus general knowledge of Chinese tea grading. Respond with ONLY valid JSON, no prose, no markdown fences. Keys: englishName, chineseName, type, flavourNotes, brewTemp, steepTime, origin, harvestYear, rarity, grade, reasoning. Rules: type must be one of Green, White, Yellow, Oolong, Black, Dark, Pu-erh, Scented, Herbal, Other. brewTemp is a number in Celsius as a string (e.g. \"85\"). steepTime is short text (e.g. \"2–3 min\" or \"15 sec\"). rarity is one of Common, Uncommon, Rare, Very rare. grade is one of Everyday, Standard, Premium, Competition, Imperial / Gong Ting, or empty. reasoning is one or two sentences explaining the rarity and grade call. Use empty string for anything you cannot determine.";
+
+// The enum fields must stay in canonical English — they are stored values the
+// filters and colours key off. Only the prose the user reads is localised.
+const SCAN_LANGUAGE_NOTE = {
+  en: "",
+  it: " Write flavourNotes, origin and reasoning in Italian. Keep type, rarity and grade exactly as the English values listed above.",
+  zh: " Write flavourNotes, origin and reasoning in Simplified Chinese. Keep type, rarity and grade exactly as the English values listed above.",
+};
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -613,9 +668,10 @@ function extractJsonObject(text) {
 
 // The Anthropic call lives on the backend (/api/scan) so the API key never
 // reaches the browser. This sends only the image bytes and the system prompt.
-async function readLabelWithClaude(dataUrl) {
+async function readLabelWithClaude(dataUrl, lang = "en") {
   const { mediaType, b64 } = parseDataUrl(dataUrl);
-  const body = JSON.stringify({ mediaType, b64, system: SCAN_SYSTEM });
+  const system = SCAN_SYSTEM + (SCAN_LANGUAGE_NOTE[lang] || "");
+  const body = JSON.stringify({ mediaType, b64, system });
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -727,14 +783,14 @@ function rarityStyle(r) {
 
 // Typical caffeine per standard serving, for context (approximate, mg).
 const CAFFEINE_REFERENCE = [
-  { label: "Herbal infusion", mg: 0, note: "caffeine-free" },
-  { label: "Decaf coffee", mg: 3, note: "8 oz" },
-  { label: "Green tea", mg: 28, note: "8 oz cup" },
-  { label: "Black tea", mg: 47, note: "8 oz cup" },
-  { label: "Cola", mg: 34, note: "12 oz can" },
-  { label: "Energy drink", mg: 80, note: "8 oz" },
-  { label: "Espresso", mg: 63, note: "1 shot" },
-  { label: "Brewed coffee", mg: 95, note: "8 oz cup" },
+  { key: "ref.herbal", mg: 0, note: "ref.note.free" },
+  { key: "ref.decaf", mg: 3, note: "ref.note.glass" },
+  { key: "ref.green", mg: 28, note: "ref.note.cup" },
+  { key: "ref.black", mg: 47, note: "ref.note.cup" },
+  { key: "ref.cola", mg: 34, note: "ref.note.can" },
+  { key: "ref.energy", mg: 80, note: "ref.note.glass" },
+  { key: "ref.espresso", mg: 63, note: "ref.note.shot" },
+  { key: "ref.coffee", mg: 95, note: "ref.note.cup" },
 ];
 
 // Pull an approximate mg number from a free-text caffeine field.
@@ -749,29 +805,31 @@ function parseCaffeineMg(s) {
 }
 
 function CaffeineContext({ tea, accent }) {
+  const { t } = useI18n();
   const teaMg = parseCaffeineMg(tea.caffeine);
   if (teaMg === null) return null; // nothing numeric to compare
-  const teaRow = { label: `This tea (${tea.englishName ? shorten(tea.englishName, 18) : "selected"})`, mg: teaMg, note: tea.caffeine, isTea: true };
-  const rows = [...CAFFEINE_REFERENCE, teaRow].sort((a, b) => a.mg - b.mg);
+  const name = tea.englishName ? shorten(tea.englishName, 18) : t("ctx.selected");
+  const teaRow = { key: "ctx.thisTea", label: t("ctx.thisTea", { name }), mg: teaMg, isTea: true };
+  const rows = [...CAFFEINE_REFERENCE.map((r) => ({ ...r, label: t(r.key) })), teaRow].sort((a, b) => a.mg - b.mg);
   const max = Math.max(95, teaMg, ...CAFFEINE_REFERENCE.map((r) => r.mg));
   return (
-    <Section title="Caffeine in context">
-      <p style={S.ctxIntro}>How a gaiwan cup of this tea compares with common drinks (approximate, per typical serving).</p>
+    <Section title={t("ctx.title")}>
+      <p style={S.ctxIntro}>{t("ctx.intro")}</p>
       <div style={S.ctxChart}>
         {rows.map((r) => {
           const pct = max > 0 ? Math.max(r.mg > 0 ? 4 : 0, (r.mg / max) * 100) : 0;
           return (
-            <div key={r.label} style={S.ctxRow}>
+            <div key={r.key} style={S.ctxRow}>
               <span style={{ ...S.ctxLabel, ...(r.isTea ? { fontWeight: 700, color: INK } : {}) }}>{r.label}</span>
               <div style={S.ctxTrack}>
                 <div style={{ ...S.ctxBar, width: `${pct}%`, background: r.isTea ? accent : "#DAD3C2" }} />
               </div>
-              <span style={{ ...S.ctxVal, ...(r.isTea ? { fontWeight: 700, color: INK } : {}) }}>{r.mg === 0 ? "0" : r.mg} mg</span>
+              <span style={{ ...S.ctxVal, ...(r.isTea ? { fontWeight: 700, color: INK } : {}) }}>{t("ctx.mg", { n: r.mg })}</span>
             </div>
           );
         })}
       </div>
-      <p style={S.ctxFoot}>Figures are rough averages; actual caffeine varies with leaf amount, water temperature, steep time, and which infusion you drink.</p>
+      <p style={S.ctxFoot}>{t("ctx.foot")}</p>
     </Section>
   );
 }
@@ -793,6 +851,9 @@ const S = {
   search: { border: "none", outline: "none", background: "transparent", fontSize: 14.5, flex: 1, color: INK, fontFamily: "inherit" },
   chips: { display: "flex", gap: 7, flexWrap: "wrap" },
   chipGroup: { display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" },
+  langGroup: { display: "inline-flex", alignItems: "center", background: "#fff", border: "1px solid #E4DECF", borderRadius: 9, padding: 2, gap: 2 },
+  langBtn: { border: "none", background: "transparent", color: "#736C5C", height: 28, minWidth: 32, padding: "0 8px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" },
+  langBtnActive: { background: INK, color: PAPER },
   chipGroupLabel: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, letterSpacing: 0.3, textTransform: "uppercase", color: "#9a9482" },
   chip: { display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E4DECF", background: "#fff", color: "#736C5C", fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" },
   chipActive: { background: INK, color: PAPER, borderColor: INK },
@@ -891,6 +952,8 @@ const CSS = `
 .clear-x { border: none; background: transparent; color: #A59D8A; cursor: pointer; display: flex; padding: 2px; border-radius: 6px; }
 .clear-x:hover { background: #F0ECE1; }
 .chip:hover { border-color: #CFC6B0; }
+.lang-btn:hover { background: #F2EEE3; }
+.lang-btn[aria-pressed="true"]:hover { background: #2E2A22; }
 .tea-search::placeholder { color: #A59D8A; }
 .fld { width: 100%; border: 1px solid #E0D9C8; border-radius: 9px; padding: 9px 11px; font-size: 14px; font-family: inherit; color: ${INK}; background: #fff; outline: none; transition: border-color .15s, box-shadow .15s; }
 .fld:focus { border-color: ${CLAY}; box-shadow: 0 0 0 3px rgba(138,90,60,0.12); }
