@@ -836,13 +836,29 @@ function CaffeineContext({ tea, accent }) {
 
 
 const INK = "#2E2A22"; const PAPER = "#FBF9F3"; const CLAY = "#8A5A3C";
+
+// Chinese glyphs use whatever serif CJK face the device already has, rather
+// than downloading one from Google. Two reasons, in order:
+//
+// 1. Google's font host is unreachable from mainland China, so the one
+//    audience that reads these characters natively is the one that never got
+//    the font.
+// 2. A CJK face is megabytes even subsetted, over a link that is already
+//    crossing a congested border.
+//
+// Every device that renders Chinese ships one of these, so the fallback is not
+// a degradation so much as the local convention: Songti on Apple platforms,
+// SimSun on Windows, Noto Serif CJK on Android and most Linux desktops. A
+// device with none of them lands on generic `serif`, which is where the old
+// stack ended up anyway whenever the download failed.
+const HANZI = "'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', SimSun, STSong, serif";
 const S = {
   root: { fontFamily: "'Inter', system-ui, sans-serif", background: PAPER, color: INK, minHeight: "100vh", padding: "28px clamp(16px, 4vw, 44px) 64px", maxWidth: 1180, margin: "0 auto" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap", paddingBottom: 22, borderBottom: "1px solid #E7E1D3" },
   brandRow: { display: "flex", alignItems: "center", gap: 16 },
   mark: { width: 54, height: 54, borderRadius: 14, background: INK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  markHanzi: { fontFamily: "'Noto Serif SC', serif", color: PAPER, fontSize: 30, lineHeight: 1, marginTop: 2 },
-  h1: { fontFamily: "'Noto Serif SC', 'Inter', serif", fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
+  markHanzi: { fontFamily: HANZI, color: PAPER, fontSize: 30, lineHeight: 1, marginTop: 2 },
+  h1: { fontFamily: HANZI, fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
   sub: { margin: "3px 0 0", fontSize: 14, color: "#8C8574" },
   saveHint: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6B6152" },
   whoami: { fontSize: 12, color: "#6B6152", marginLeft: "auto" },
@@ -863,25 +879,25 @@ const S = {
   card: { textAlign: "left", padding: 0, border: "1px solid #E7E1D3", borderRadius: 16, background: "#fff", cursor: "pointer", overflow: "hidden", fontFamily: "inherit", color: "inherit", transition: "transform .16s, box-shadow .16s, border-color .16s", display: "flex", flexDirection: "column" },
   cardTop: { position: "relative", height: 128, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   cardImg: { width: "100%", height: "100%", objectFit: "cover" },
-  cardHanzi: { fontFamily: "'Noto Serif SC', serif", fontSize: 44, lineHeight: 1, opacity: 0.9 },
+  cardHanzi: { fontFamily: HANZI, fontSize: 44, lineHeight: 1, opacity: 0.9 },
   typeTag: { position: "absolute", top: 10, left: 10, color: "#fff", fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 7, letterSpacing: "0.01em" },
   rarityTag: { position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.82)", color: "#5b5344", fontSize: 10.5, fontWeight: 600, padding: "3px 8px", borderRadius: 7, textTransform: "uppercase", letterSpacing: "0.04em" },
   gradeTag: { position: "absolute", top: 10, right: 10, maxWidth: "60%", background: "rgba(255,255,255,0.86)", color: "#5b5344", fontSize: 10.5, fontWeight: 600, padding: "3px 8px", borderRadius: 7, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: "right", lineHeight: 1.3 },
   cardBody: { padding: "13px 15px 15px", display: "flex", flexDirection: "column", gap: 8, flex: 1 },
   cardNames: { display: "flex", flexDirection: "column", gap: 2 },
   cardEn: { fontSize: 16, fontWeight: 600, lineHeight: 1.25, letterSpacing: "-0.01em" },
-  cardZh: { fontFamily: "'Noto Serif SC', serif", fontSize: 13.5, color: "#9A9282" },
+  cardZh: { fontFamily: HANZI, fontSize: 13.5, color: "#9A9282" },
   cardFlavour: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "#7C7565", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   cardMeta: { display: "flex", flexWrap: "wrap", gap: "5px 12px", marginTop: "auto", paddingTop: 4 },
   metaItem: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#9A9282" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "72px 20px", color: "#9A9282" },
-  emptyMark: { fontFamily: "'Noto Serif SC', serif", fontSize: 60, color: "#DDD5C4", marginBottom: 8 },
+  emptyMark: { fontFamily: HANZI, fontSize: 60, color: "#DDD5C4", marginBottom: 8 },
   emptyTitle: { fontSize: 18, fontWeight: 600, color: INK, margin: "0 0 4px" },
   emptySub: { fontSize: 14, margin: "0 0 14px", maxWidth: 320, lineHeight: 1.5 },
   overlay: { position: "fixed", inset: 0, background: "rgba(40,36,28,0.42)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px 16px", zIndex: 50, overflowY: "auto" },
   modal: { background: PAPER, borderRadius: 20, width: "100%", maxWidth: 560, boxShadow: "0 24px 60px rgba(40,30,15,0.28)", display: "flex", flexDirection: "column", maxHeight: "90vh", overflow: "hidden" },
   modalHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 14px", borderBottom: "1px solid #EAE4D6" },
-  modalTitle: { fontFamily: "'Noto Serif SC', serif", fontSize: 20, fontWeight: 600, margin: 0 },
+  modalTitle: { fontFamily: HANZI, fontSize: 20, fontWeight: 600, margin: 0 },
   modalScroll: { overflowY: "auto", padding: "18px 20px", flex: 1 },
   modalFoot: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderTop: "1px solid #EAE4D6", background: "#fff" },
   intake: { display: "flex", gap: 14, alignItems: "flex-start", padding: 15, borderRadius: 14, marginBottom: 14 },
@@ -902,11 +918,11 @@ const S = {
   reasoning: { fontStyle: "italic", color: "#6f6a5b", background: "#fff", border: "1px solid #EAE4D6", borderLeft: `3px solid ${CLAY}`, borderRadius: 8, padding: "11px 13px" },
   detailHero: { position: "relative", height: 168, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   detailImg: { width: "100%", height: "100%", objectFit: "cover" },
-  detailHanzi: { fontFamily: "'Noto Serif SC', serif", fontSize: 72, lineHeight: 1, opacity: 0.92 },
+  detailHanzi: { fontFamily: HANZI, fontSize: 72, lineHeight: 1, opacity: 0.92 },
   detailClose: { position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.85)", zIndex: 2 },
   detailNames: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 },
-  detailEn: { fontFamily: "'Noto Serif SC', serif", fontSize: 24, fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
-  detailZh: { fontFamily: "'Noto Serif SC', serif", fontSize: 16, color: "#9A9282", margin: "3px 0 0" },
+  detailEn: { fontFamily: HANZI, fontSize: 24, fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
+  detailZh: { fontFamily: HANZI, fontSize: 16, color: "#9A9282", margin: "3px 0 0" },
   badges: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 },
   gradeBadge: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8, background: "#F3ECD9", color: "#7A5A1C" },
   rarityBadge: { display: "inline-flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8 },
@@ -931,7 +947,6 @@ const S = {
 };
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
 * { box-sizing: border-box; }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

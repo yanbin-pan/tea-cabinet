@@ -60,6 +60,13 @@ to `POST /api/scan` and the backend attaches the credential server-side. With no
 configured the endpoint answers `503` and the UI simply asks you to fill the fields in
 by hand — the app degrades rather than breaks.
 
+**The page loads nothing from a third-party host.** Inter is bundled and served from the
+app's own origin, and Chinese glyphs use the device's own serif CJK face rather than a
+webfont. This is not a performance nicety: Google's font hosts are blocked in mainland
+China, and a blocked `@import` does not fail fast — it hangs until the connect times out
+while the browser withholds rendering. For an app about Chinese tea, that broke the page
+for precisely the people most likely to be reading it.
+
 ### API
 
 | Method | Path              | Behaviour                                                          |
@@ -151,7 +158,8 @@ Set `ANTHROPIC_API_KEY` in the backend terminal to exercise label scanning.
 
 ```bash
 cd backend  && npm test        # node:test — persistence and routes, no network needed
-cd frontend && npm run build   # a real production build is the frontend's gate
+cd frontend && npm test        # vitest — API client, translations, font sourcing
+cd frontend && npm run build   # a real production build is the last gate
 ```
 
 The backend suite covers the parts most likely to lose data quietly: that a corrupt or
