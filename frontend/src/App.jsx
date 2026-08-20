@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Search, Plus, X, Leaf, Pencil, Trash2, Save, MapPin, Calendar, Droplet, Award, Camera, Upload, Loader2, AlertCircle, Check, Download, FileUp, Zap, Layers } from "lucide-react";
 import { ApiError, loadCollection, saveCollection, uploadPhoto, photoUrl, isPhotoId, dataUrlToBlob } from "./api.js";
-import { LanguageProvider, useI18n, LANGUAGES, vocab, translateError } from "./i18n.js";
+import { LanguageProvider, useI18n, LANGUAGES, vocab, translateError, keyedError } from "./i18n.js";
 
 const TEA_TYPES = ["Green", "White", "Yellow", "Oolong", "Black", "Dark", "Pu-erh", "Scented", "Herbal", "Other"];
 
@@ -479,7 +479,7 @@ function EditModal({ draft, onClose, onSave, onToast }) {
         return;
       }
       await runScan(dataUrl);
-    } catch (err) { setScanError((err && err.message) || t("err.readFile")); }
+    } catch (err) { setScanError(translateError(lang, err, "err.readFile")); }
     finally { e.target.value = ""; }
   };
 
@@ -502,7 +502,7 @@ function EditModal({ draft, onClose, onSave, onToast }) {
       }));
       setScanned(true);
       onToast(t("err.labelRead"), "ok");
-    } catch (err) { setScanError(err.message || t("err.readLabel")); }
+    } catch (err) { setScanError(translateError(lang, err, "err.readLabel")); }
     finally { setScanning(false); }
   };
 
@@ -683,21 +683,21 @@ async function readLabelWithClaude(dataUrl, lang = "en") {
         headers: { "Content-Type": "application/json" },
         body,
       });
-    } catch (e) { lastErr = new Error("Network hiccup while reading the label. Check your connection and try again."); continue; }
+    } catch (e) { lastErr = keyedError("err.scan.network"); continue; }
 
     // 503 is the backend saying scanning is unconfigured — deterministic, so it
     // is checked before the retryable 5xx branch that would otherwise swallow it.
-    if (res.status === 503) throw new Error("Label scanning isn't configured on the server. Enter the details by hand.");
-    if (res.status === 429 || res.status >= 500) { lastErr = new Error("The label reader is busy right now. Give it a moment and re-read."); continue; }
-    if (!res.ok) throw new Error("The label reader is unavailable right now. Enter the details by hand.");
+    if (res.status === 503) throw keyedError("err.scan.notConfigured");
+    if (res.status === 429 || res.status >= 500) { lastErr = keyedError("err.scan.busy"); continue; }
+    if (!res.ok) throw keyedError("err.scan.unavailable");
 
     let data;
     try { data = await res.json(); }
-    catch (e) { lastErr = new Error("Got a garbled response. Try re-reading the photo."); continue; }
+    catch (e) { lastErr = keyedError("err.scan.garbled"); continue; }
 
     const text = (data && typeof data.text === "string" ? data.text : "").trim();
     const parsed = extractJsonObject(text);
-    if (!parsed || typeof parsed !== "object") { lastErr = new Error("Couldn't make sense of that label. Try a clearer, well-lit photo."); continue; }
+    if (!parsed || typeof parsed !== "object") { lastErr = keyedError("err.scan.unparsable"); continue; }
 
     // Normalise fields defensively so a partial/odd response can't crash the form.
     const safe = (v) => (typeof v === "string" ? v : v == null ? "" : String(v));
@@ -711,25 +711,25 @@ async function readLabelWithClaude(dataUrl, lang = "en") {
     if (out.type && TEA_TYPES.indexOf(out.type) === -1) out.type = "Other";
     return out;
   }
-  throw lastErr || new Error("Couldn't read that label. Fill the fields in by hand.");
+  throw lastErr || keyedError("err.readLabel");
 }
 
 function fileToDataUrl(file) {
   return new Promise((res, rej) => {
-    if (!file) { rej(new Error("No file was selected.")); return; }
+    if (!file) { rej(keyedError("err.file.none")); return; }
     const r = new FileReader();
     r.onload = () => {
       const out = r.result;
       if (typeof out !== "string" || out.indexOf("data:") !== 0 || out.indexOf(",") === -1) {
-        rej(new Error("That file didn't read as an image. Try a different photo or format (JPEG or PNG)."));
+        rej(keyedError("err.file.notImage"));
         return;
       }
       res(out);
     };
-    r.onerror = () => rej(new Error("Couldn't read that file. It may be corrupted — try another photo."));
-    r.onabort = () => rej(new Error("Reading the file was interrupted. Try again."));
+    r.onerror = () => rej(keyedError("err.file.corrupt"));
+    r.onabort = () => rej(keyedError("err.file.interrupted"));
     try { r.readAsDataURL(file); }
-    catch (e) { rej(new Error("Couldn't open that file. Try a JPEG or PNG.")); }
+    catch (e) { rej(keyedError("err.file.open")); }
   });
 }
 
@@ -764,12 +764,12 @@ function normalizeImage(dataUrl, maxDim = 1600, quality = 0.85) {
 
 // Robustly split a data URL into { mediaType, b64 }, validating structure.
 function parseDataUrl(dataUrl) {
-  if (typeof dataUrl !== "string") throw new Error("No image to read.");
+  if (typeof dataUrl !== "string") throw keyedError("err.file.noImage");
   const comma = dataUrl.indexOf(",");
-  if (dataUrl.indexOf("data:") !== 0 || comma === -1) throw new Error("The photo data looks malformed. Re-upload the image.");
+  if (dataUrl.indexOf("data:") !== 0 || comma === -1) throw keyedError("err.file.malformed");
   const meta = dataUrl.slice(5, comma);
   const b64 = dataUrl.slice(comma + 1);
-  if (!b64 || b64.length < 16) throw new Error("The photo appears empty. Try a clearer shot.");
+  if (!b64 || b64.length < 16) throw keyedError("err.file.empty");
   const mediaType = (meta.split(";")[0] || "").trim() || "image/jpeg";
   const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
   return { mediaType: allowed.indexOf(mediaType) === -1 ? "image/jpeg" : mediaType, b64 };

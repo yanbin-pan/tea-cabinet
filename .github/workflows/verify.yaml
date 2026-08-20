@@ -28,6 +28,8 @@ jobs:
         working-directory: backend
 
   frontend:
+    # Named for the required status check that already exists; it now runs
+    # the tests too.
     name: Frontend build
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +38,11 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+        working-directory: frontend
+      # The build alone passes with a failing test suite, which left the
+      # frontend's tests gating nothing. Run them before the build so a
+      # regression fails here rather than in someone's browser.
+      - run: npm test
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

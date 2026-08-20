@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach, vi } from "vitest";
-import { LANGUAGES, DEFAULT_LANG, TABLES, isSupported, translate, makeT, vocab, translateError, readStoredLang } from "./i18n.js";
+import { LANGUAGES, DEFAULT_LANG, TABLES, isSupported, translate, makeT, vocab, translateError, keyedError, readStoredLang } from "./i18n.js";
 
 const CODES = LANGUAGES.map((l) => l.code);
 
@@ -168,6 +168,26 @@ describe("translateError", () => {
   // A failure mode that predates the codes must still say something real.
   test("falls back to the error's own message when there is no code", () => {
     expect(translateError("it", { message: "Something specific went wrong" })).toBe("Something specific went wrong");
+  });
+
+  // The label scanner and the file reader raise their own failures. Before
+  // they carried keys, translateError preferred err.message and every scan
+  // failure stayed English no matter which language was selected.
+  test("translates an error raised with a message key", () => {
+    expect(translateError("it", keyedError("err.scan.busy")))
+      .toBe("Il lettore di etichette è occupato in questo momento. Attendi un attimo e rileggi.");
+    expect(translateError("zh", keyedError("err.file.corrupt")))
+      .toBe("无法读取该文件，可能已损坏 — 请换一张照片。");
+  });
+
+  test("a keyed error still carries readable English on .message", () => {
+    expect(keyedError("err.file.empty").message).toBe("The photo appears empty. Try a clearer shot.");
+  });
+
+  test("prefers the message key over a code when an error has both", () => {
+    const err = keyedError("err.scan.garbled");
+    err.code = "network";
+    expect(translateError("en", err)).toBe("Got a garbled response. Try re-reading the photo.");
   });
 
   test("falls back to the given key when there is nothing else", () => {

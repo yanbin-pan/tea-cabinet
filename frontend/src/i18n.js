@@ -166,6 +166,26 @@ export const TABLES = {
     "import.photosSkipped_other": "{count} photos skipped",
     "import.none": "no teas found",
 
+    "app.metaDescription": "The Tea Cabinet — a personal inventory of Chinese tea.",
+
+    // Reading a file off disk, before anything is uploaded.
+    "err.file.none": "No file was selected.",
+    "err.file.open": "Couldn't open that file. Try a JPEG or PNG.",
+    "err.file.corrupt": "Couldn't read that file. It may be corrupted — try another photo.",
+    "err.file.interrupted": "Reading the file was interrupted. Try again.",
+    "err.file.notImage": "That file didn't read as an image. Try a different photo or format (JPEG or PNG).",
+    "err.file.noImage": "No image to read.",
+    "err.file.empty": "The photo appears empty. Try a clearer shot.",
+    "err.file.malformed": "The photo data looks malformed. Re-upload the image.",
+
+    // Talking to the label reader.
+    "err.scan.network": "Network hiccup while reading the label. Check your connection and try again.",
+    "err.scan.notConfigured": "Label scanning isn't configured on the server. Enter the details by hand.",
+    "err.scan.busy": "The label reader is busy right now. Give it a moment and re-read.",
+    "err.scan.unavailable": "The label reader is unavailable right now. Enter the details by hand.",
+    "err.scan.garbled": "Got a garbled response. Try re-reading the photo.",
+    "err.scan.unparsable": "Couldn't make sense of that label. Try a clearer, well-lit photo.",
+
     "err.needName": "Give the tea at least an English or Chinese name.",
     "err.notImage": "That doesn't look like an image. Upload a JPEG, PNG, or photo of the packet.",
     "err.readFile": "Couldn't read that file. Try another photo.",
@@ -330,6 +350,24 @@ export const TABLES = {
     "import.photosSkipped_other": "{count} foto saltate",
     "import.none": "nessun tè trovato",
 
+    "app.metaDescription": "La Credenza del Tè — un inventario personale di tè cinese.",
+
+    "err.file.none": "Nessun file selezionato.",
+    "err.file.open": "Impossibile aprire quel file. Prova con un JPEG o un PNG.",
+    "err.file.corrupt": "Impossibile leggere quel file. Potrebbe essere danneggiato — prova un'altra foto.",
+    "err.file.interrupted": "La lettura del file è stata interrotta. Riprova.",
+    "err.file.notImage": "Quel file non è stato letto come immagine. Prova un'altra foto o un altro formato (JPEG o PNG).",
+    "err.file.noImage": "Nessuna immagine da leggere.",
+    "err.file.empty": "La foto sembra vuota. Prova uno scatto più nitido.",
+    "err.file.malformed": "I dati della foto sembrano danneggiati. Ricarica l'immagine.",
+
+    "err.scan.network": "Problema di rete durante la lettura dell'etichetta. Controlla la connessione e riprova.",
+    "err.scan.notConfigured": "La lettura delle etichette non è configurata sul server. Inserisci i dati a mano.",
+    "err.scan.busy": "Il lettore di etichette è occupato in questo momento. Attendi un attimo e rileggi.",
+    "err.scan.unavailable": "Il lettore di etichette non è disponibile in questo momento. Inserisci i dati a mano.",
+    "err.scan.garbled": "La risposta ricevuta è incomprensibile. Prova a rileggere la foto.",
+    "err.scan.unparsable": "Non è stato possibile interpretare quell'etichetta. Prova una foto più nitida e ben illuminata.",
+
     "err.needName": "Dai al tè almeno un nome inglese o cinese.",
     "err.notImage": "Non sembra un'immagine. Carica un JPEG, un PNG o una foto della confezione.",
     "err.readFile": "Impossibile leggere quel file. Prova un'altra foto.",
@@ -493,6 +531,24 @@ export const TABLES = {
     "import.photosSkipped_other": "跳过 {count} 张照片",
     "import.none": "未找到任何茶",
 
+    "app.metaDescription": "茶柜 — 个人中国茶收藏。",
+
+    "err.file.none": "未选择任何文件。",
+    "err.file.open": "无法打开该文件。请使用 JPEG 或 PNG。",
+    "err.file.corrupt": "无法读取该文件，可能已损坏 — 请换一张照片。",
+    "err.file.interrupted": "文件读取被中断。请重试。",
+    "err.file.notImage": "该文件无法作为图片读取。请换一张照片或改用其他格式（JPEG 或 PNG）。",
+    "err.file.noImage": "没有可读取的图片。",
+    "err.file.empty": "照片内容为空。请重新拍一张更清晰的。",
+    "err.file.malformed": "照片数据格式有误。请重新上传图片。",
+
+    "err.scan.network": "识别标签时网络出现问题。请检查网络连接后重试。",
+    "err.scan.notConfigured": "服务器未配置标签识别功能。请手动填写各项信息。",
+    "err.scan.busy": "标签识别服务正忙。请稍候再重新识别。",
+    "err.scan.unavailable": "标签识别服务当前不可用。请手动填写各项信息。",
+    "err.scan.garbled": "收到的响应无法解析。请重新识别该照片。",
+    "err.scan.unparsable": "无法辨认该标签。请换一张更清晰、光线更好的照片。",
+
     "err.needName": "请至少填写英文名或中文名。",
     "err.notImage": "这似乎不是图片。请上传 JPEG、PNG 或包装照片。",
     "err.readFile": "无法读取该文件。请换一张照片。",
@@ -571,12 +627,24 @@ export function vocab(lang, kind, value) {
   return VOCAB[kind]?.[lang]?.[value] ?? value;
 }
 
-// An ApiError carries a code; anything else is shown as-is. The English message
-// on the error is the last resort, so a new failure mode is never silent.
+// Failures reach here two ways. An ApiError carries a short `code` naming the
+// HTTP failure; errors raised inside the app carry `messageKey`, the full key
+// their wording lives under. Either way the reader sees their own language.
+// A bare Error still shows its English message rather than nothing, so a
+// failure mode nobody has keyed yet is never silent.
 export function translateError(lang, err, fallbackKey = "err.saveFailed") {
+  if (err && err.messageKey) return translate(lang, err.messageKey);
   if (err && err.code) return translate(lang, `err.api.${err.code}`, { status: err.status });
   if (err && err.message) return err.message;
   return translate(lang, fallbackKey);
+}
+
+// Raises a failure the user is meant to read. The English wording is kept on
+// `message` so logs and any untranslated path still say something real.
+export function keyedError(messageKey) {
+  const err = new Error(translate(DEFAULT_LANG, messageKey));
+  err.messageKey = messageKey;
+  return err;
 }
 
 export function readStoredLang() {
@@ -611,10 +679,16 @@ export function LanguageProvider({ children }) {
     storeLang(next);
   };
 
-  // Screen readers and the browser's own translation prompt both key off this,
-  // so it has to follow the toggle rather than stay at the document's default.
+  // The document's own strings are as user-facing as anything on the page: the
+  // tab title is often all that is visible. index.html ships the English copy
+  // for the pre-hydration paint; from here on the toggle owns them.
   useEffect(() => {
-    if (globalThis.document) globalThis.document.documentElement.lang = lang;
+    const doc = globalThis.document;
+    if (!doc) return;
+    doc.documentElement.lang = lang;
+    doc.title = translate(lang, "app.title");
+    const meta = doc.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute("content", translate(lang, "app.metaDescription"));
   }, [lang]);
 
   const value = useMemo(() => ({ lang, setLang, t: makeT(lang) }), [lang]);
