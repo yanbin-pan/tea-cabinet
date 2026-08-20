@@ -7,11 +7,15 @@ const STORAGE_KEY = "cha:collection:v2";
 const PHOTO_ID = /^[0-9a-f]{32}$/;
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, kind = "http" } = {}) {
+  constructor(message, { status = 0, kind = "http", code = "" } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.kind = kind;
+    // A stable identifier for the failure, so the UI can say this in whatever
+    // language the reader chose. `message` stays the English wording and is
+    // still the fallback for anything that arrives without a code.
+    this.code = code;
   }
 }
 
@@ -23,6 +27,16 @@ function explain(status) {
   return `The server refused that request (HTTP ${status}).`;
 }
 
+// Kept beside explain() so a new status can never gain a message without also
+// gaining the code the translations are keyed by.
+function codeFor(status) {
+  if (status === 401) return "auth";
+  if (status === 413) return "tooLarge";
+  if (status === 429) return "rateLimited";
+  if (status >= 500) return "server";
+  return "refused";
+}
+
 // A 2xx response with a body that fails to parse as JSON is still a failure —
 // it should surface as an ApiError like every other failure mode, not as a
 // raw SyntaxError that callers branching on err.kind/err.status don't expect.
@@ -30,7 +44,7 @@ async function parseJson(res) {
   try {
     return await res.json();
   } catch (e) {
-    throw new ApiError("The server sent back something unreadable.", { status: res.status, kind: "parse" });
+    throw new ApiError("The server sent back something unreadable.", { status: res.status, kind: "parse", code: "unreadable" });
   }
 }
 
@@ -72,11 +86,11 @@ export async function saveCollection(teas, { fetchImpl = fetch } = {}) {
       body: JSON.stringify({ teas }),
     });
   } catch (e) {
-    throw new ApiError("Could not reach the server. Your change is not saved.", { kind: "network" });
+    throw new ApiError("Could not reach the server. Your change is not saved.", { kind: "network", code: "network" });
   }
   // fetch resolves for 4xx and 5xx. Checking res.ok is the whole fix.
   if (!res.ok) {
-    throw new ApiError(explain(res.status), { status: res.status, kind: res.status === 401 ? "auth" : "http" });
+    throw new ApiError(explain(res.status), { status: res.status, kind: res.status === 401 ? "auth" : "http", code: codeFor(res.status) });
   }
   mirror(teas);
   return res.json().catch(() => ({}));
@@ -91,10 +105,10 @@ export async function loadCollection({ fetchImpl = fetch } = {}) {
     return { teas: cached || [], source: cached ? "cache" : "unavailable", email: null };
   }
   if (res.status === 401) {
-    throw new ApiError(explain(401), { status: 401, kind: "auth" });
+    throw new ApiError(explain(401), { status: 401, kind: "auth", code: "auth" });
   }
   if (!res.ok) {
-    throw new ApiError(explain(res.status), { status: res.status });
+    throw new ApiError(explain(res.status), { status: res.status, code: codeFor(res.status) });
   }
   const data = await parseJson(res);
   const teas = Array.isArray(data && data.teas) ? data.teas : [];
@@ -125,11 +139,12 @@ export async function uploadPhoto(blob, { fetchImpl = fetch } = {}) {
       body: blob,
     });
   } catch (e) {
-    throw new ApiError("Could not upload that photo.", { kind: "network" });
+    throw new ApiError("Could not upload that photo.", { kind: "network", code: "photoNetwork" });
   }
   if (!res.ok) {
-    const message = res.status === 413 ? "That photo is too large." : explain(res.status);
-    throw new ApiError(message, { status: res.status });
+    const tooLarge = res.status === 413;
+    const message = tooLarge ? "That photo is too large." : explain(res.status);
+    throw new ApiError(message, { status: res.status, code: tooLarge ? "photoTooLarge" : codeFor(res.status) });
   }
   const data = await parseJson(res);
   return data.id;
