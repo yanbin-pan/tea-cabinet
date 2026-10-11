@@ -5,17 +5,18 @@ import { LanguageProvider, useI18n, LANGUAGES, vocab, translateError, keyedError
 
 const TEA_TYPES = ["Green", "White", "Yellow", "Oolong", "Black", "Dark", "Pu-erh", "Scented", "Herbal", "Other"];
 
+// Muted, earthy tints: dyed cloth and glazes rather than bright labels.
 const TYPE_COLORS = {
-  Green:   { bg: "#E7EFDD", fg: "#3B5220", dot: "#6E9438" },
-  White:   { bg: "#EFEDE4", fg: "#5A5647", dot: "#B0A98C" },
-  Yellow:  { bg: "#F5EBCE", fg: "#6B571C", dot: "#C9A62E" },
-  Oolong:  { bg: "#EDE2CF", fg: "#6A4E23", dot: "#B7833B" },
-  Black:   { bg: "#EADAD2", fg: "#5C3A2A", dot: "#9E5A3C" },
-  Dark:    { bg: "#DFD6CC", fg: "#463A2E", dot: "#7A6248" },
-  "Pu-erh":{ bg: "#DCD0C2", fg: "#403123", dot: "#6E5137" },
-  Scented: { bg: "#F1E3EA", fg: "#6A3A50", dot: "#B25E86" },
-  Herbal:  { bg: "#E4EDE6", fg: "#33513C", dot: "#5E9068" },
-  Other:   { bg: "#E8E6E0", fg: "#4A473F", dot: "#928C7C" },
+  Green:   { bg: "#E3E5D4", fg: "#4B5532", dot: "#7A8858" },
+  White:   { bg: "#ECE8DD", fg: "#5E594C", dot: "#A9A18C" },
+  Yellow:  { bg: "#ECE3C9", fg: "#695829", dot: "#B4974B" },
+  Oolong:  { bg: "#E8DDC9", fg: "#68502F", dot: "#A07A4C" },
+  Black:   { bg: "#E7D8CD", fg: "#5D3B2D", dot: "#925F48" },
+  Dark:    { bg: "#DFD6CA", fg: "#493D30", dot: "#78654E" },
+  "Pu-erh":{ bg: "#DBD0C1", fg: "#443529", dot: "#6C5640" },
+  Scented: { bg: "#E9DCDD", fg: "#68454F", dot: "#A07580" },
+  Herbal:  { bg: "#DEE2D7", fg: "#3E5144", dot: "#6D8872" },
+  Other:   { bg: "#E5E1D8", fg: "#504B42", dot: "#8F887A" },
 };
 
 const GRADES = ["Everyday", "Standard", "Premium", "Competition", "Imperial / Gong Ting"];
@@ -295,7 +296,7 @@ function Cabinet() {
       <style>{CSS}</style>
       <header style={S.header}>
         <div style={S.brandRow}>
-          <div style={S.mark}><span style={S.markHanzi}>茶</span></div>
+          <img src="/mark.svg" alt="" style={S.mark} />
           <div>
             <h1 style={S.h1}>{t("app.title")}</h1>
             <p style={S.sub}>{t("app.subtitle")} · {t("app.entries", { count: collection.length })}</p>
@@ -305,7 +306,7 @@ function Cabinet() {
           {email && <span style={S.whoami}>{email}</span>}
           {saveState === "saving" && <span style={S.saveHint}><Loader2 size={13} className="spin" /> {t("header.saving")}</span>}
           {saveState === "saved" && <span style={S.saveHint}><Check size={13} /> {t("header.saved")}</span>}
-          {saveState === "error" && <span style={{ ...S.saveHint, color: "#B3261E" }}><AlertCircle size={13} /> {t("header.notSaved")}</span>}
+          {saveState === "error" && <span style={{ ...S.saveHint, color: RUST }}><AlertCircle size={13} /> {t("header.notSaved")}</span>}
           <LanguageToggle />
           <label className="btn" style={{ cursor: "pointer" }}>
             <FileUp size={15} /> {t("header.import")}
@@ -319,7 +320,7 @@ function Cabinet() {
 
       <div style={S.controls}>
         <div style={S.searchWrap}>
-          <Search size={17} style={{ color: "#9a9482", flexShrink: 0 }} />
+          <Search size={16} strokeWidth={1.6} style={{ color: ASH, flexShrink: 0 }} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("search.placeholder")} style={S.search} className="tea-search" />
           {query && <button className="clear-x" onClick={() => setQuery("")} aria-label={t("search.clear")}><X size={15} /></button>}
         </div>
@@ -355,7 +356,7 @@ function Cabinet() {
         // A server we could not reach must never be drawn as an empty cabinet:
         // that is the reading that made a data loss look like a normal state.
         <div style={S.empty}>
-          <AlertCircle size={26} color="#B3261E" />
+          <AlertCircle size={26} color={RUST} />
           <p style={{ ...S.emptyTitle, marginTop: 12 }}>{loadError.key ? t(loadError.key) : translateError(lang, loadError.error, "err.loadFailed")}</p>
           <p style={S.emptySub}>{t("state.notLost")}</p>
           <button className="btn" onClick={() => window.location.reload()}>{t("state.tryAgain")}</button>
@@ -402,9 +403,9 @@ function TeaCard({ tea, onOpen }) {
   const c = TYPE_COLORS[tea.type] || TYPE_COLORS.Other;
   return (
     <button className="tea-card" style={S.card} onClick={onOpen}>
-      <div style={{ ...S.cardTop, background: c.bg }}>
+      <div className="card-top" style={{ ...S.cardTop, background: c.bg }}>
         {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.cardImg} /> : <span style={{ ...S.cardHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || <Leaf size={30} color={c.dot} />}</span>}
-        <span style={{ ...S.typeTag, background: c.dot }}>{vocab(lang, "type", tea.type) || "—"}</span>
+        <span style={{ ...S.typeTag, color: c.fg }}><span style={{ ...S.chipDot, background: c.dot }} />{vocab(lang, "type", tea.type) || "—"}</span>
         {tea.grade && <span style={S.gradeTag}>{vocab(lang, "grade", tea.grade)}</span>}
       </div>
       <div style={S.cardBody}>
@@ -426,7 +427,7 @@ function EmptyState({ hasAny, onAdd, onClear }) {
   const { t } = useI18n();
   return (
     <div style={S.empty}>
-      <div style={S.emptyMark}>茶</div>
+      <img src="/enso.svg" alt="" style={S.emptyMark} />
       {hasAny ? (
         <><p style={S.emptyTitle}>{t("empty.noMatchTitle")}</p><p style={S.emptySub}>{t("empty.noMatchSub")}</p><button className="btn" onClick={onClear} style={{ marginTop: 4 }}>{t("empty.clearFilters")}</button></>
       ) : (
@@ -570,14 +571,14 @@ function DetailModal({ tea, onClose, onEdit, onDelete }) {
   return (
     <Overlay onClose={onClose}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={{ ...S.detailHero, background: c.bg }}>
+        <div className="card-top" style={{ ...S.detailHero, background: c.bg }}>
           <button className="icon-btn" style={S.detailClose} onClick={onClose} aria-label={t("common.close")}><X size={18} /></button>
           {tea.photo ? <img src={srcFor(tea.photo)} alt="" style={S.detailImg} /> : <span style={{ ...S.detailHanzi, color: c.fg }}>{firstHanzi(tea.chineseName) || (tea.englishName && tea.englishName[0]) || "茶"}</span>}
         </div>
         <div style={S.modalScroll}>
           <div style={S.detailNames}>
             <div><h2 style={S.detailEn}>{tea.englishName || t("card.untitled")}</h2>{tea.chineseName && <p style={S.detailZh}>{tea.chineseName}</p>}</div>
-            <span style={{ ...S.typeTagLg, background: c.dot }}>{vocab(lang, "type", tea.type) || "—"}</span>
+            <span style={{ ...S.typeTagLg, color: c.fg, borderColor: c.dot }}><span style={{ ...S.chipDot, background: c.dot }} />{vocab(lang, "type", tea.type) || "—"}</span>
           </div>
           {(tea.grade || tea.rarity) && (
             <div style={S.badges}>
@@ -777,7 +778,7 @@ function parseDataUrl(dataUrl) {
 function firstHanzi(s) { if (!s) return ""; const m = s.match(/[\u4e00-\u9fff]/g); return m ? m.slice(0, 2).join("") : ""; }
 function shorten(s, n) { return s && s.length > n ? s.slice(0, n - 1) + "…" : s; }
 function rarityStyle(r) {
-  const map = { Common: { background: "#EDEBE4", color: "#5F5A4C" }, Uncommon: { background: "#E3EDDD", color: "#3F5A28" }, Rare: { background: "#EDE1CF", color: "#7A5320" }, "Very rare": { background: "#F0E0E7", color: "#7C3457" } };
+  const map = { Common: { borderColor: "#D9D1C0", color: "#5F5A4C" }, Uncommon: { borderColor: "#C5CBB2", color: "#4B5532" }, Rare: { borderColor: "#D6C3A4", color: "#7A5A2C" }, "Very rare": { borderColor: "#D6BCC2", color: "#6E4350" } };
   return map[r] || map.Common;
 }
 
@@ -822,7 +823,7 @@ function CaffeineContext({ tea, accent }) {
             <div key={r.key} style={S.ctxRow}>
               <span style={{ ...S.ctxLabel, ...(r.isTea ? { fontWeight: 700, color: INK } : {}) }}>{r.label}</span>
               <div style={S.ctxTrack}>
-                <div style={{ ...S.ctxBar, width: `${pct}%`, background: r.isTea ? accent : "#DAD3C2" }} />
+                <div style={{ ...S.ctxBar, width: `${pct}%`, background: r.isTea ? accent : "#D6CDBB" }} />
               </div>
               <span style={{ ...S.ctxVal, ...(r.isTea ? { fontWeight: 700, color: INK } : {}) }}>{t("ctx.mg", { n: r.mg })}</span>
             </div>
@@ -835,128 +836,154 @@ function CaffeineContext({ tea, accent }) {
 }
 
 
-const INK = "#2E2A22"; const PAPER = "#FBF9F3"; const CLAY = "#8A5A3C";
+// Wabi-sabi palette: washi paper, sumi ink, ash, fired clay and moss.
+const INK = "#2A2620"; const INK_SOFT = "#5C554A"; const ASH = "#8E8676";
+const PAPER = "#F3EEE3"; const SURFACE = "#FAF7F0"; const LINE = "#DFD7C6";
+const CLAY = "#9A6B4F"; const RUST = "#9C4A35";
+const SERIF = "'Cormorant Garamond', 'Noto Serif SC', Georgia, serif";
+const HANZI = "'Noto Serif SC', serif";
+
+const dataUri = (svg) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+// A faint paper fibre, so flat colour reads as something handmade.
+const GRAIN = dataUri('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" seed="4"/><feColorMatrix values="0 0 0 0 0.42  0 0 0 0 0.36  0 0 0 0 0.27  0 0 0 0.09 0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>');
+// One uneven brush stroke, used as the rule under the header.
+const BRUSH = dataUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 8" preserveAspectRatio="none"><path d="M0 4.6 C120 3.2 260 2.6 420 3.4 C600 4.4 760 2.4 880 3.6 C940 4.2 980 4.8 1000 5.2 L1000 5.6 C960 5.6 900 5.4 820 5.8 C640 6.6 470 5.2 300 5.6 C180 5.9 80 6.2 0 5.6 Z" fill="#2A2620" fill-opacity="0.24"/></svg>');
+
+// Corners that are almost, but not quite, even.
+const R_CARD = "18px 22px 17px 21px";
+const R_SOFT = "12px 14px 11px 13px";
+
 const S = {
-  root: { fontFamily: "'Inter', system-ui, sans-serif", background: PAPER, color: INK, minHeight: "100vh", padding: "28px clamp(16px, 4vw, 44px) 64px", maxWidth: 1180, margin: "0 auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap", paddingBottom: 22, borderBottom: "1px solid #E7E1D3" },
+  root: { fontFamily: "'Inter', system-ui, sans-serif", color: INK, minHeight: "100vh", padding: "40px clamp(18px, 5vw, 64px) 88px", maxWidth: 1200, margin: "0 auto" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 20, flexWrap: "wrap", paddingBottom: 30, backgroundImage: BRUSH, backgroundRepeat: "no-repeat", backgroundPosition: "left bottom", backgroundSize: "100% 8px" },
   brandRow: { display: "flex", alignItems: "center", gap: 16 },
-  mark: { width: 54, height: 54, borderRadius: 14, background: INK, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  markHanzi: { fontFamily: "'Noto Serif SC', serif", color: PAPER, fontSize: 30, lineHeight: 1, marginTop: 2 },
-  h1: { fontFamily: "'Noto Serif SC', 'Inter', serif", fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
-  sub: { margin: "3px 0 0", fontSize: 14, color: "#8C8574" },
-  saveHint: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6B6152" },
-  whoami: { fontSize: 12, color: "#6B6152", marginLeft: "auto" },
-  controls: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", margin: "22px 0 26px" },
-  searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #E4DECF", borderRadius: 11, padding: "0 12px", height: 42, flex: "1 1 260px", minWidth: 220 },
-  search: { border: "none", outline: "none", background: "transparent", fontSize: 14.5, flex: 1, color: INK, fontFamily: "inherit" },
-  chips: { display: "flex", gap: 7, flexWrap: "wrap" },
-  chipGroup: { display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" },
-  langGroup: { display: "inline-flex", alignItems: "center", background: "#fff", border: "1px solid #E4DECF", borderRadius: 9, padding: 2, gap: 2 },
-  langBtn: { border: "none", background: "transparent", color: "#736C5C", height: 28, minWidth: 32, padding: "0 8px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" },
+  mark: { width: 64, height: 64, flexShrink: 0, marginLeft: -6 },
+  h1: { fontFamily: SERIF, fontSize: "clamp(30px, 4.6vw, 40px)", fontWeight: 500, margin: 0, letterSpacing: "0.01em", lineHeight: 1.05 },
+  sub: { margin: "6px 0 0", fontSize: 13, color: ASH, letterSpacing: "0.04em" },
+  saveHint: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: ASH },
+  whoami: { fontSize: 12, color: ASH, marginLeft: "auto", letterSpacing: "0.02em" },
+  controls: { display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap", margin: "34px 0 38px" },
+  searchWrap: { display: "flex", alignItems: "center", gap: 10, background: "transparent", borderBottom: `1px solid ${LINE}`, padding: "0 2px", height: 44, flex: "1 1 260px", minWidth: 220 },
+  search: { border: "none", outline: "none", background: "transparent", fontSize: 15, flex: 1, color: INK, fontFamily: "inherit" },
+  chips: { display: "flex", gap: 8, flexWrap: "wrap" },
+  chipGroup: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", flexBasis: "100%" },
+  langGroup: { display: "inline-flex", alignItems: "center", border: `1px solid ${LINE}`, borderRadius: 999, padding: 2, gap: 2 },
+  langBtn: { border: "none", background: "transparent", color: ASH, height: 28, minWidth: 34, padding: "0 9px", borderRadius: 999, fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all .2s" },
   langBtnActive: { background: INK, color: PAPER },
-  chipGroupLabel: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, letterSpacing: 0.3, textTransform: "uppercase", color: "#9a9482" },
-  chip: { display: "inline-flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: "1px solid #E4DECF", background: "#fff", color: "#736C5C", fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" },
+  chipGroupLabel: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", color: ASH },
+  chip: { display: "inline-flex", alignItems: "center", gap: 7, height: 32, padding: "0 13px", borderRadius: 999, border: `1px solid ${LINE}`, background: "transparent", color: INK_SOFT, fontSize: 13, fontWeight: 400, cursor: "pointer", fontFamily: "inherit", transition: "all .2s" },
   chipActive: { background: INK, color: PAPER, borderColor: INK },
-  chipDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
-  chipCount: { fontSize: 11.5, opacity: 0.6, fontVariantNumeric: "tabular-nums" },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(224px, 1fr))", gap: 18 },
-  card: { textAlign: "left", padding: 0, border: "1px solid #E7E1D3", borderRadius: 16, background: "#fff", cursor: "pointer", overflow: "hidden", fontFamily: "inherit", color: "inherit", transition: "transform .16s, box-shadow .16s, border-color .16s", display: "flex", flexDirection: "column" },
-  cardTop: { position: "relative", height: 128, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  cardImg: { width: "100%", height: "100%", objectFit: "cover" },
-  cardHanzi: { fontFamily: "'Noto Serif SC', serif", fontSize: 44, lineHeight: 1, opacity: 0.9 },
-  typeTag: { position: "absolute", top: 10, left: 10, color: "#fff", fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 7, letterSpacing: "0.01em" },
-  rarityTag: { position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.82)", color: "#5b5344", fontSize: 10.5, fontWeight: 600, padding: "3px 8px", borderRadius: 7, textTransform: "uppercase", letterSpacing: "0.04em" },
-  gradeTag: { position: "absolute", top: 10, right: 10, maxWidth: "60%", background: "rgba(255,255,255,0.86)", color: "#5b5344", fontSize: 10.5, fontWeight: 600, padding: "3px 8px", borderRadius: 7, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: "right", lineHeight: 1.3 },
-  cardBody: { padding: "13px 15px 15px", display: "flex", flexDirection: "column", gap: 8, flex: 1 },
-  cardNames: { display: "flex", flexDirection: "column", gap: 2 },
-  cardEn: { fontSize: 16, fontWeight: 600, lineHeight: 1.25, letterSpacing: "-0.01em" },
-  cardZh: { fontFamily: "'Noto Serif SC', serif", fontSize: 13.5, color: "#9A9282" },
-  cardFlavour: { margin: 0, fontSize: 13, lineHeight: 1.5, color: "#7C7565", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
-  cardMeta: { display: "flex", flexWrap: "wrap", gap: "5px 12px", marginTop: "auto", paddingTop: 4 },
-  metaItem: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#9A9282" },
-  empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "72px 20px", color: "#9A9282" },
-  emptyMark: { fontFamily: "'Noto Serif SC', serif", fontSize: 60, color: "#DDD5C4", marginBottom: 8 },
-  emptyTitle: { fontSize: 18, fontWeight: 600, color: INK, margin: "0 0 4px" },
-  emptySub: { fontSize: 14, margin: "0 0 14px", maxWidth: 320, lineHeight: 1.5 },
-  overlay: { position: "fixed", inset: 0, background: "rgba(40,36,28,0.42)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px 16px", zIndex: 50, overflowY: "auto" },
-  modal: { background: PAPER, borderRadius: 20, width: "100%", maxWidth: 560, boxShadow: "0 24px 60px rgba(40,30,15,0.28)", display: "flex", flexDirection: "column", maxHeight: "90vh", overflow: "hidden" },
-  modalHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 14px", borderBottom: "1px solid #EAE4D6" },
-  modalTitle: { fontFamily: "'Noto Serif SC', serif", fontSize: 20, fontWeight: 600, margin: 0 },
-  modalScroll: { overflowY: "auto", padding: "18px 20px", flex: 1 },
-  modalFoot: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderTop: "1px solid #EAE4D6", background: "#fff" },
-  intake: { display: "flex", gap: 14, alignItems: "flex-start", padding: 15, borderRadius: 14, marginBottom: 14 },
-  intakeIcon: { width: 58, height: 58, borderRadius: 12, background: "rgba(255,255,255,0.6)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  intakeImg: { width: 58, height: 58, borderRadius: 12, objectFit: "cover", flexShrink: 0 },
-  intakeTitle: { fontSize: 15, fontWeight: 600, margin: 0, color: INK },
-  intakeSub: { fontSize: 12.5, margin: "3px 0 10px", lineHeight: 1.45, color: "#6f6a5b" },
+  chipDot: { width: 7, height: 7, borderRadius: "50% 45% 52% 48%", flexShrink: 0, display: "inline-block" },
+  chipCount: { fontSize: 11, opacity: 0.55, fontVariantNumeric: "tabular-nums" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 28 },
+  card: { textAlign: "left", padding: 0, border: `1px solid ${LINE}`, borderRadius: R_CARD, background: SURFACE, cursor: "pointer", overflow: "hidden", fontFamily: "inherit", color: "inherit", transition: "transform .3s ease, box-shadow .3s ease, border-color .3s", display: "flex", flexDirection: "column" },
+  cardTop: { position: "relative", height: 150, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  cardImg: { width: "100%", height: "100%", objectFit: "cover", filter: "saturate(0.88)" },
+  cardHanzi: { position: "relative", fontFamily: HANZI, fontSize: 42, fontWeight: 500, lineHeight: 1, opacity: 0.85, letterSpacing: "0.08em" },
+  typeTag: { position: "absolute", top: 12, left: 12, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(250,247,240,0.86)", fontSize: 11.5, fontWeight: 500, padding: "4px 10px", borderRadius: 999, letterSpacing: "0.02em" },
+  gradeTag: { position: "absolute", top: 14, right: 14, maxWidth: "55%", color: "rgba(42,38,32,0.6)", fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.14em", textAlign: "right", lineHeight: 1.4 },
+  cardBody: { padding: "18px 20px 20px", display: "flex", flexDirection: "column", gap: 10, flex: 1 },
+  cardNames: { display: "flex", flexDirection: "column", gap: 3 },
+  cardEn: { fontFamily: SERIF, fontSize: 22, fontWeight: 600, lineHeight: 1.15 },
+  cardZh: { fontFamily: HANZI, fontSize: 13, color: ASH, letterSpacing: "0.06em" },
+  cardFlavour: { margin: 0, fontSize: 13, lineHeight: 1.6, color: INK_SOFT, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  cardMeta: { display: "flex", flexWrap: "wrap", gap: "5px 14px", marginTop: "auto", paddingTop: 10, borderTop: `1px dashed ${LINE}` },
+  metaItem: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: ASH, letterSpacing: "0.02em" },
+  empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "88px 20px", color: ASH },
+  emptyMark: { width: 96, height: 96, opacity: 0.22, marginBottom: 14 },
+  emptyTitle: { fontFamily: SERIF, fontSize: 24, fontWeight: 500, color: INK, margin: "0 0 6px" },
+  emptySub: { fontSize: 14, margin: "0 0 18px", maxWidth: 320, lineHeight: 1.6 },
+  overlay: { position: "fixed", inset: 0, background: "rgba(42,38,32,0.34)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 16px 16px", zIndex: 50, overflowY: "auto" },
+  modal: { background: `${GRAIN}, ${PAPER}`, borderRadius: "22px 26px 20px 24px", width: "100%", maxWidth: 560, boxShadow: "0 30px 70px rgba(42,32,18,0.22)", display: "flex", flexDirection: "column", maxHeight: "88vh", overflow: "hidden", border: `1px solid ${LINE}` },
+  modalHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "22px 24px 16px", borderBottom: `1px solid ${LINE}` },
+  modalTitle: { fontFamily: SERIF, fontSize: 26, fontWeight: 500, margin: 0 },
+  modalScroll: { overflowY: "auto", padding: "22px 24px", flex: 1 },
+  modalFoot: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "16px 24px", borderTop: `1px solid ${LINE}` },
+  intake: { display: "flex", gap: 16, alignItems: "flex-start", padding: 18, borderRadius: R_CARD, marginBottom: 18 },
+  intakeIcon: { width: 60, height: 60, borderRadius: "50% 46% 52% 48%", background: "rgba(250,247,240,0.7)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  intakeImg: { width: 60, height: 60, borderRadius: R_SOFT, objectFit: "cover", flexShrink: 0 },
+  intakeTitle: { fontFamily: SERIF, fontSize: 19, fontWeight: 600, margin: 0, color: INK },
+  intakeSub: { fontSize: 12.5, margin: "4px 0 12px", lineHeight: 1.55, color: INK_SOFT },
   intakeBtns: { display: "flex", gap: 8, flexWrap: "wrap" },
-  scanState: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#6f6a5b", padding: "9px 12px", background: "#fff", border: "1px solid #EAE4D6", borderRadius: 10, marginBottom: 14 },
-  scanOk: { background: "#EAF2E2", border: "1px solid #CBE0B8", color: "#3F5A28" },
-  scanErr: { background: "#FBEBE8", border: "1px solid #F1CDC4", color: "#8A4132" },
-  fieldGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 },
+  scanState: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: INK_SOFT, padding: "10px 14px", background: SURFACE, border: `1px solid ${LINE}`, borderRadius: R_SOFT, marginBottom: 16 },
+  scanOk: { background: "#E8EADC", border: "1px solid #CDD2B8", color: "#4B5532" },
+  scanErr: { background: "#F3E3DC", border: "1px solid #E2C6BA", color: RUST },
+  fieldGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px 18px" },
   field: { display: "flex", flexDirection: "column", gap: 6 },
-  fieldLabel: { fontSize: 12, fontWeight: 600, color: "#847D6C", letterSpacing: "0.01em" },
-  section: { marginBottom: 18 },
-  sectionTitle: { fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#A59D8A", margin: "0 0 7px" },
-  sectionText: { margin: 0, fontSize: 14.5, lineHeight: 1.55, color: "#453f33" },
-  reasoning: { fontStyle: "italic", color: "#6f6a5b", background: "#fff", border: "1px solid #EAE4D6", borderLeft: `3px solid ${CLAY}`, borderRadius: 8, padding: "11px 13px" },
-  detailHero: { position: "relative", height: 168, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  detailImg: { width: "100%", height: "100%", objectFit: "cover" },
-  detailHanzi: { fontFamily: "'Noto Serif SC', serif", fontSize: 72, lineHeight: 1, opacity: 0.92 },
-  detailClose: { position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,0.85)", zIndex: 2 },
-  detailNames: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 },
-  detailEn: { fontFamily: "'Noto Serif SC', serif", fontSize: 24, fontWeight: 600, margin: 0, letterSpacing: "-0.01em" },
-  detailZh: { fontFamily: "'Noto Serif SC', serif", fontSize: 16, color: "#9A9282", margin: "3px 0 0" },
-  badges: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 },
-  gradeBadge: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8, background: "#F3ECD9", color: "#7A5A1C" },
-  rarityBadge: { display: "inline-flex", alignItems: "center", fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8 },
-  typeTagLg: { color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "4px 11px", borderRadius: 8, whiteSpace: "nowrap", flexShrink: 0 },
+  fieldLabel: { fontSize: 10.5, fontWeight: 500, color: ASH, letterSpacing: "0.12em", textTransform: "uppercase" },
+  section: { marginBottom: 24 },
+  sectionTitle: { display: "flex", alignItems: "center", gap: 10, fontSize: 10.5, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.16em", color: ASH, margin: "0 0 10px" },
+  sectionText: { margin: 0, fontSize: 14.5, lineHeight: 1.7, color: INK_SOFT },
+  reasoning: { fontFamily: SERIF, fontSize: 17, fontStyle: "italic", lineHeight: 1.5, color: INK_SOFT, borderLeft: `2px solid ${CLAY}`, padding: "2px 0 2px 16px" },
+  detailHero: { position: "relative", height: 190, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  detailImg: { width: "100%", height: "100%", objectFit: "cover", filter: "saturate(0.88)" },
+  detailHanzi: { position: "relative", fontFamily: HANZI, fontSize: 68, fontWeight: 500, lineHeight: 1, opacity: 0.85, letterSpacing: "0.08em" },
+  detailClose: { position: "absolute", top: 14, right: 14, background: "rgba(250,247,240,0.86)", zIndex: 2 },
+  detailNames: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 },
+  detailEn: { fontFamily: SERIF, fontSize: 32, fontWeight: 500, margin: 0, lineHeight: 1.1 },
+  detailZh: { fontFamily: HANZI, fontSize: 16, color: ASH, margin: "6px 0 0", letterSpacing: "0.08em" },
+  badges: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 },
+  gradeBadge: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 999, border: "1px solid #D9C9A6", color: "#76592A", letterSpacing: "0.02em" },
+  rarityBadge: { display: "inline-flex", alignItems: "center", fontSize: 12, fontWeight: 500, padding: "5px 12px", borderRadius: 999, borderWidth: 1, borderStyle: "solid", letterSpacing: "0.02em" },
+  typeTagLg: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 500, padding: "5px 12px", borderRadius: 999, borderWidth: 1, borderStyle: "solid", whiteSpace: "nowrap", flexShrink: 0 },
   brewRow: { display: "flex", gap: 12 },
-  brewCell: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "13px 10px", background: "#fff", border: "1px solid #EAE4D6", borderRadius: 11 },
-  brewVal: { fontSize: 17, fontWeight: 600, color: INK },
-  brewLbl: { fontSize: 11.5, color: "#A59D8A", textTransform: "uppercase", letterSpacing: "0.05em" },
-  ctxIntro: { margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: "#7C7565" },
-  ctxChart: { display: "flex", flexDirection: "column", gap: 8 },
-  ctxRow: { display: "grid", gridTemplateColumns: "minmax(96px, 34%) 1fr auto", alignItems: "center", gap: 10 },
-  ctxLabel: { fontSize: 12.5, color: "#6f6a5b", lineHeight: 1.25 },
-  ctxTrack: { position: "relative", height: 12, background: "#F0ECE1", borderRadius: 6, overflow: "hidden" },
-  ctxBar: { position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 6, transition: "width .4s ease", minWidth: 2 },
-  ctxVal: { fontSize: 12, color: "#847D6C", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", textAlign: "right" },
-  ctxFoot: { margin: "12px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "#A59D8A", fontStyle: "italic" },
-  provRow: { display: "flex", flexDirection: "column", gap: 8 },
-  provItem: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 14, color: "#453f33" },
-  confirmText: { fontSize: 13.5, color: "#8A4132", marginRight: "auto", fontWeight: 500 },
-  toast: { position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: INK, color: PAPER, fontSize: 14, fontWeight: 500, padding: "11px 18px", borderRadius: 11, display: "flex", alignItems: "center", gap: 9, boxShadow: "0 10px 30px rgba(40,30,15,0.3)", zIndex: 60 },
-  toastErr: { background: "#8A4132" },
+  brewCell: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "16px 10px", background: SURFACE, border: `1px solid ${LINE}`, borderRadius: R_SOFT },
+  brewVal: { fontFamily: SERIF, fontSize: 22, fontWeight: 600, color: INK, lineHeight: 1.1 },
+  brewLbl: { fontSize: 10, color: ASH, textTransform: "uppercase", letterSpacing: "0.14em" },
+  ctxIntro: { margin: "0 0 14px", fontSize: 13, lineHeight: 1.6, color: INK_SOFT },
+  ctxChart: { display: "flex", flexDirection: "column", gap: 9 },
+  ctxRow: { display: "grid", gridTemplateColumns: "minmax(96px, 34%) 1fr auto", alignItems: "center", gap: 12 },
+  ctxLabel: { fontSize: 12.5, color: INK_SOFT, lineHeight: 1.25 },
+  ctxTrack: { position: "relative", height: 6, background: "#E6DFD0", borderRadius: 6, overflow: "hidden" },
+  ctxBar: { position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 6, transition: "width .5s ease", minWidth: 2 },
+  ctxVal: { fontSize: 12, color: ASH, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", textAlign: "right" },
+  ctxFoot: { margin: "14px 0 0", fontSize: 11.5, lineHeight: 1.6, color: ASH, fontStyle: "italic" },
+  provRow: { display: "flex", flexDirection: "column", gap: 9 },
+  provItem: { display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, color: INK_SOFT },
+  confirmText: { fontSize: 13.5, color: RUST, marginRight: "auto" },
+  toast: { position: "fixed", bottom: 26, left: "50%", transform: "translateX(-50%)", background: INK, color: PAPER, fontSize: 13.5, padding: "12px 20px", borderRadius: R_SOFT, display: "flex", alignItems: "center", gap: 9, boxShadow: "0 12px 32px rgba(42,32,18,0.24)", zIndex: 60, letterSpacing: "0.01em" },
+  toastErr: { background: RUST },
 };
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap');
 * { box-sizing: border-box; }
-.spin { animation: spin 0.8s linear infinite; }
+body { background: ${GRAIN}, ${PAPER}; }
+::selection { background: #DCD3BF; }
+.spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.tea-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(60,45,20,0.12); border-color: #D8CFB9 !important; }
-.tea-card:focus-visible { outline: 2px solid ${CLAY}; outline-offset: 2px; }
-.btn { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid #DDD5C2; background: #fff; color: ${INK}; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all .15s; white-space: nowrap; }
-.btn:hover { background: #F5F1E7; border-color: #CFC6B0; }
+.card-top::before { content: ""; position: absolute; inset: 0; background: ${GRAIN}; pointer-events: none; }
+.card-top::after { content: ""; position: absolute; left: 50%; top: 50%; width: 210px; height: 210px; transform: translate(-46%, -50%) rotate(-14deg); background: url('/enso.svg') center / contain no-repeat; opacity: 0.06; pointer-events: none; }
+.card-top:has(img)::after { display: none; }
+.card-top > * { position: relative; z-index: 1; }
+.tea-card:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(60,45,20,0.08); border-color: #CDC3AE !important; }
+.tea-card:focus-visible { outline: 1px solid ${CLAY}; outline-offset: 3px; }
+.btn { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px; border-radius: 999px; border: 1px solid ${LINE}; background: transparent; color: ${INK}; font-size: 13.5px; font-weight: 400; cursor: pointer; font-family: inherit; transition: all .2s; white-space: nowrap; letter-spacing: 0.01em; }
+.btn svg { stroke-width: 1.6; }
+.btn:hover { background: rgba(42,38,32,0.04); border-color: #C9BFA9; }
 .btn:active { transform: scale(0.98); }
-.btn-small { height: 32px; padding: 0 12px; font-size: 13px; border-radius: 8px; }
+.btn:focus-visible, .chip:focus-visible, .lang-btn:focus-visible, .icon-btn:focus-visible { outline: 1px solid ${CLAY}; outline-offset: 2px; }
+.btn-small { height: 32px; padding: 0 13px; font-size: 12.5px; background: rgba(250,247,240,0.7); }
 .btn-primary { background: ${INK}; color: ${PAPER}; border-color: ${INK}; }
-.btn-primary:hover { background: #423C30; border-color: #423C30; }
-.btn-danger { background: #A5432E; color: #fff; border-color: #A5432E; }
-.btn-danger:hover { background: #8E3725; }
-.btn-ghost-danger { color: #A5432E; border-color: #E6CFC7; margin-right: auto; }
-.btn-ghost-danger:hover { background: #FBEBE8; }
-.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; border: none; background: transparent; color: #7C7565; cursor: pointer; transition: background .15s; }
-.icon-btn:hover { background: rgba(0,0,0,0.06); }
-.clear-x { border: none; background: transparent; color: #A59D8A; cursor: pointer; display: flex; padding: 2px; border-radius: 6px; }
-.clear-x:hover { background: #F0ECE1; }
-.chip:hover { border-color: #CFC6B0; }
-.lang-btn:hover { background: #F2EEE3; }
-.lang-btn[aria-pressed="true"]:hover { background: #2E2A22; }
-.tea-search::placeholder { color: #A59D8A; }
-.fld { width: 100%; border: 1px solid #E0D9C8; border-radius: 9px; padding: 9px 11px; font-size: 14px; font-family: inherit; color: ${INK}; background: #fff; outline: none; transition: border-color .15s, box-shadow .15s; }
-.fld:focus { border-color: ${CLAY}; box-shadow: 0 0 0 3px rgba(138,90,60,0.12); }
-textarea.fld { resize: vertical; line-height: 1.5; }
-select.fld { cursor: pointer; }
+.btn-primary:hover { background: #3E382F; border-color: #3E382F; }
+.btn-danger { background: ${RUST}; color: ${SURFACE}; border-color: ${RUST}; }
+.btn-danger:hover { background: #853D2B; }
+.btn-ghost-danger { color: ${RUST}; border-color: #E2C6BA; margin-right: auto; }
+.btn-ghost-danger:hover { background: rgba(156,74,53,0.06); }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; border: none; background: transparent; color: ${INK_SOFT}; cursor: pointer; transition: background .2s; }
+.icon-btn:hover { background: rgba(42,38,32,0.06); }
+.clear-x { border: none; background: transparent; color: ${ASH}; cursor: pointer; display: flex; padding: 3px; border-radius: 50%; }
+.clear-x:hover { background: rgba(42,38,32,0.06); }
+.chip:hover { border-color: #C9BFA9; }
+.lang-btn:hover { color: ${INK}; }
+.lang-btn[aria-pressed="true"]:hover { color: ${PAPER}; }
+.tea-search::placeholder { color: ${ASH}; opacity: 0.8; }
+.fld { width: 100%; border: none; border-bottom: 1px solid ${LINE}; border-radius: 0; padding: 8px 2px; font-size: 14.5px; font-family: inherit; color: ${INK}; background: transparent; outline: none; transition: border-color .2s; }
+.fld::placeholder { color: #B2AA98; }
+.fld:focus { border-bottom-color: ${CLAY}; }
+textarea.fld { resize: vertical; line-height: 1.6; }
+select.fld { cursor: pointer; appearance: none; -webkit-appearance: none; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238E8676' fill='none' stroke-width='1.2'/%3E%3C/svg%3E") right 4px center no-repeat; padding-right: 20px; }
+@media (max-width: 520px) {
+  .btn { height: 36px; padding: 0 13px; }
+}
 `;
